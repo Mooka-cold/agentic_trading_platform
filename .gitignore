@@ -1,0 +1,20 @@
+# Frontend
+/frontend/node_modules
+/frontend/.next
+
+# Backend
+/backend/__pycache__
+/backend/venv
+.env
+
+# AI Engine
+/ai_engine/__pycache__
+/ai_engine/venv
+
+# Freqtrade
+/trading_bot/user_data/backtest_results
+/trading_bot/user_data/plot
+/trading_bot/.freqtrade
+
+# Docker
+.DS_Store

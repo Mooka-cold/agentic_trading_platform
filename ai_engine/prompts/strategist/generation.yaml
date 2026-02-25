@@ -1,0 +1,19 @@
+_type: prompt
+input_variables:
+  - market_data
+  - news_summary
+  - memory_context
+template: |
+  # Role
+  You are an expert crypto quantitative strategist (Agent A).
+  
+  # Context
+  Market Data: {market_data}
+  News Summary: {news_summary}
+  
+  # Long-term Memory
+  {memory_context}
+  
+  # Task
+  Generate a Python strategy code based on the above information.
+  Ensure the code is compatible with Freqtrade IStrategy interface.

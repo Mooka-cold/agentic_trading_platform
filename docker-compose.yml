@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # --- Infrastructure ---
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=trading
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/timescaledb_data:/var/lib/postgresql/data
+    networks:
+      - trading-net
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - trading-net
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./docker/chroma_data:/chroma/chroma
+    networks:
+      - trading-net
+
+  # --- Application Services ---
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - TIMESCALE_URI=postgresql://user:pass@timescaledb:5432/trading
+      - REDIS_URL=redis://redis:6379/0
+      - AI_ENGINE_URL=http://ai-engine:8000
+    depends_on:
+      - timescaledb
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - trading-net
+
+  ai-engine:
+    build: ./ai_engine
+    ports:
+      - "8002:8000"
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    volumes:
+      - ./ai_engine:/app
+    networks:
+      - trading-net
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    networks:
+      - trading-net
+
+  # --- Trading Execution ---
+  # freqtrade:
+  #   image: freqtradeorg/freqtrade:stable
+  #   volumes:
+  #     - ./trading_bot/user_data:/freqtrade/user_data
+  #   command: >
+  #     trade
+  #     --logfile /freqtrade/user_data/logs/freqtrade.log
+  #     --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
+  #     --config /freqtrade/user_data/config.json
+  #     --strategy SampleStrategy
+  #   networks:
+  #     - trading-net
+
+networks:
+  trading-net:
+    driver: bridge
