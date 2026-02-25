@@ -6,24 +6,24 @@
 ### 1.1 系统数据流架构
 ```mermaid
 graph TD
-    User[用户 (Web Dashboard)] --> Frontend[前端: Next.js + Tailwind]
-    Frontend --> Backend[后端 API: FastAPI (Python)]
+    User["用户 (Web Dashboard)"] --> Frontend["前端: Next.js + Tailwind"]
+    Frontend --> Backend["后端 API: FastAPI (Python)"]
     
     subgraph "数据层 (Data Layer)"
-        News[新闻聚合器] --> |Raw Text| DB_Vector[(向量数据库: ChromaDB/pgvector)]
-        Market[行情数据: CCXT] --> |OHLCV/Orderbook| DB_Time[(时序数据库: TimescaleDB)]
+        News["新闻聚合器"] --> |Raw Text| DB_Vector[("向量数据库: ChromaDB/pgvector")]
+        Market["行情数据: CCXT"] --> |OHLCV/Orderbook| DB_Time[("时序数据库: TimescaleDB")]
     end
     
     subgraph "AI 决策层 (Decision Layer)"
-        DB_Vector --> |RAG| LLM_Agent[AI 决策智能体 (LangChain)]
+        DB_Vector --> |RAG| LLM_Agent["AI 决策智能体 (LangChain)"]
         DB_Time --> |技术指标| LLM_Agent
-        LLM_Agent --> |生成策略代码/信号| Strategy_Gen[策略生成器]
+        LLM_Agent --> |生成策略代码/信号| Strategy_Gen["策略生成器"]
     end
     
     subgraph "执行层 (Execution Layer)"
-        Backend --> |控制指令| Bot_Manager[机器人管理器]
-        Bot_Manager --> |启动/停止| Freqtrade[Freqtrade (交易引擎)]
-        Freqtrade --> |API| Exchange[(Binance/OKX)]
+        Backend --> |控制指令| Bot_Manager["机器人管理器"]
+        Bot_Manager --> |启动/停止| Freqtrade["Freqtrade (交易引擎)"]
+        Freqtrade --> |API| Exchange[("Binance/OKX")]
     end
 ```
 
@@ -33,20 +33,20 @@ graph TD
 ```mermaid
 graph TD
     subgraph "感知与记忆 (Perception & Memory)"
-        Info[信息流] --> |清洗 & 向量化| VDB[(向量记忆库: ChromaDB)]
+        Info["信息流"] --> |清洗 & 向量化| VDB[("向量记忆库: ChromaDB")]
         VDB --> |检索相似历史| A
     end
 
     subgraph "思考与进化 (Cognition & Evolution) - 慢速环"
-        A[Agent A: 策略进化者] --> |生成新代码/逻辑| D[Agent D: 对抗回测]
-        X[Agent X: 混沌制造者] -.-> |注入异常| D
-        D --> |存活策略| B[Agent B: 逻辑审查]
+        A["Agent A: 策略进化者"] --> |生成新代码/逻辑| D["Agent D: 对抗回测"]
+        X["Agent X: 混沌制造者"] -.-> |注入异常| D
+        D --> |存活策略| B["Agent B: 逻辑审查"]
         B --> |部署| C
     end
 
     subgraph "执行与反思 (Action & Reflection) - 快速环"
-        C[Agent C: 智能执行] --> |交易| Market[交易所]
-        Market --> |结果| R[Agent R: 反思者]
+        C["Agent C: 智能执行"] --> |交易| Market["交易所"]
+        Market --> |结果| R["Agent R: 反思者"]
         R --> |复盘总结| VDB
     end
 ```
