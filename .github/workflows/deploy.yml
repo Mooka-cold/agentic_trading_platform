@@ -19,7 +19,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Downcase Image Name
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - name: Log in to the Container registry
         uses: docker/login-action@v2
@@ -87,7 +93,7 @@ jobs:
             # 2. Create .env file from GitHub Secrets (Overwrite existing)
             # This ensures secrets are securely injected and persisted for compose
             cat <<EOF > .env
-            IMAGE_PREFIX=ghcr.io/${{ github.repository }}
+            IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY,,}
             
             # API Keys
             CRYPTOPANIC_API_KEY=${{ secrets.CRYPTOPANIC_API_KEY }}
