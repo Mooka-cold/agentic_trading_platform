@@ -27,10 +27,27 @@ workflow_engine = WorkflowEngine()
 watcher_service = WatcherService(workflow_engine)
 
 
+async def scheduler_loop():
+    """
+    Internal Scheduler for Periodic Tasks (Reflections, etc.)
+    """
+    while True:
+        try:
+            print("[Scheduler] Triggering periodic review check...")
+            await workflow_engine.reflector.run_periodic_reviews()
+        except Exception as e:
+            print(f"[Scheduler] Error: {e}")
+        
+        # Check every 15 minutes
+        await asyncio.sleep(900)
+
 @app.on_event("startup")
 async def startup_event():
     print("Starting AI Engine...")
     await watcher_service.start()
+    
+    # Start internal scheduler
+    asyncio.create_task(scheduler_loop())
     
     # Check if loop should be running (restore state)
     try:
