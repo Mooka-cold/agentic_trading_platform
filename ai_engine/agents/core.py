@@ -572,7 +572,7 @@ class Reflector(BaseAgent):
         await self.think("Reflecting on the decision process...", session_id)
         
         # 1. Post-Trade Analysis (If a trade was closed)
-        if hasattr(state, 'execution_result') and state.execution_result.get('mode') in ['CLOSE', 'PARTIAL_CLOSE']:
+        if hasattr(state, 'execution_result') and state.execution_result and state.execution_result.get('mode') in ['CLOSE', 'PARTIAL_CLOSE']:
             closed_session_id = state.execution_result.get('closed_session_id')
             pnl = state.execution_result.get('pnl', 0.0)
             
