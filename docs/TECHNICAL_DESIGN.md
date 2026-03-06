@@ -68,10 +68,10 @@ graph TD
 *   **WebSocket**: **FastAPI WebSockets** (用于向前端推送数据)。
 
 ### 2.3 数据存储 (Data Storage)
-*   **时序数据库**: **TimescaleDB** (基于 PostgreSQL) —— 存储行情 K 线 (OHLCV)、深度数据。
-*   **向量数据库**: **ChromaDB** 或 **pgvector** (PostgreSQL 插件) —— 存储新闻文本向量 (用于 RAG)。
-*   **关系型数据库**: **PostgreSQL** —— 存储用户配置、交易记录、策略参数。
-*   **缓存**: **Redis** —— 缓存热点数据（如最新价格、Token）、Celery 消息队列。
+*   **时序数据库**: **TimescaleDB** (独立部署) —— 存储海量行情 K 线 (OHLCV)、技术指标 (SMA, EMA, RSI 等)。
+*   **关系型数据库**: **PostgreSQL** (独立部署) —— 存储用户账户、策略配置、新闻元数据、交易记录。
+*   **向量数据库**: **ChromaDB** —— 存储新闻文本向量 (用于 RAG 检索)。
+*   **缓存**: **Redis** —— 缓存热点数据（如最新价格）、Celery 消息队列。
 
 ### 2.4 AI 与策略 (AI & Strategy)
 *   **LLM 框架**: **LangChain** (构建 Agent, RAG 流程)。
@@ -93,11 +93,12 @@ graph TD
 ## 3. 核心模块设计
 
 ### 3.1 数据采集服务 (Data Ingestion Service)
-*   **行情录制器 (Market Recorder)**:
-    *   使用 `ccxt.pro` (异步) 连接 Binance WebSocket。
-    *   订阅 `trade`, `kline_1m` 频道。
-    *   数据清洗后批量写入 TimescaleDB。
-*   **新闻抓取器 (News Fetcher)**:
+*   **行情录制器 (Market Streamer)**:
+    *   连接交易所 WebSocket (CCXT Pro)，订阅 `kline_1m`。
+    *   **实时指标计算**: 使用 Pandas 手工计算 SMA, EMA, RSI, MACD, BB, ATR 等指标，解决 `pandas-ta` 在高并发下的兼容性问题。
+    *   **数据回补 (Backfill)**: 提供 API 接口，从数据库最早记录向前回补缺失的历史 K 线。
+    *   写入 TimescaleDB (Market DB)。
+*   **新闻抓取器 (News Crawler)**:
     *   定时任务 (Celery Beat) 每 5 分钟调用 CryptoPanic API。
     *   抓取 RSS Feeds (CoinDesk 等)。
     *   使用 LLM/FinBERT 对标题进行情感打分 (-1 ~ 1)。

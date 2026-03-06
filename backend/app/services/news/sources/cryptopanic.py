@@ -5,7 +5,7 @@ from datetime import datetime
 from app.core.interfaces import NewsSourceAdapter, NewsItem
 
 class CryptoPanicFetcher(NewsSourceAdapter):
-    BASE_URL = "https://cryptopanic.com/api/v1/posts/"
+    BASE_URL = "https://cryptopanic.com/api/developer/v2/posts/"
     
     def __init__(self, api_key: str, currencies: str = "BTC,ETH"):
         self.api_key = api_key
@@ -32,20 +32,44 @@ class CryptoPanicFetcher(NewsSourceAdapter):
             async with self.session.get(self.BASE_URL, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
+                    # Debug: Print first item to understand structure
+                    if data.get("results"):
+                        print(f"DEBUG FIRST ITEM: {data['results'][0]}")
+                    
                     results = data.get("results", [])[:limit]
                     
                     for post in results:
                         # Parse date string to datetime
-                        # Format: "2023-10-27T10:00:00Z"
-                        pub_date = datetime.strptime(post["published_at"], "%Y-%m-%dT%H:%M:%SZ")
+                        try:
+                            # Try standard format first
+                            pub_date = datetime.strptime(post.get("published_at", ""), "%Y-%m-%dT%H:%M:%SZ")
+                        except ValueError:
+                            # Try ISO format with microseconds
+                            try:
+                                pub_date = datetime.strptime(post.get("published_at", ""), "%Y-%m-%dT%H:%M:%S.%fZ")
+                            except ValueError:
+                                pub_date = datetime.utcnow()
                         
+                        # Handle URL
+                        post_url = post.get("url")
+                        if not post_url:
+                            # Try to construct from slug if available
+                            slug = post.get("slug")
+                            if slug:
+                                post_url = f"https://cryptopanic.com/news/{post.get('id', '0')}/{slug}"
+                            else:
+                                # Last resort: use title hash to avoid duplicates
+                                import hashlib
+                                title_hash = hashlib.md5(post.get("title", "").encode()).hexdigest()
+                                post_url = f"https://cryptopanic.com/news/hashed/{title_hash}"
+
                         yield NewsItem(
-                            title=post["title"],
-                            summary=post["title"], # CryptoPanic often has title as summary
-                            url=post["url"],
-                            source=post["domain"],
+                            title=post.get("title", "No Title"),
+                            summary=post.get("title", ""), 
+                            url=post_url,
+                            source=post.get("domain", "cryptopanic.com"),
                             timestamp=pub_date,
-                            tags=[curr["code"] for curr in post.get("currencies", [])]
+                            tags=[curr["code"] for curr in post.get("currencies", [])] if post.get("currencies") else []
                         )
                 else:
                     print(f"CryptoPanic API Error: {response.status}")

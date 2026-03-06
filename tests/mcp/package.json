@@ -1,0 +1,11 @@
+{
+  "name": "mcp-regression-runner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:mcp": "node runner.js --suite regression_suite.json --headless"
+  },
+  "dependencies": {
+    "playwright": "1.46.0"
+  }
+}

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trading Terminal - Gamified Dashboard</title>
+    <style>
+        /* Reset & Base */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; color: #0f172a; height: 100vh; display: flex; overflow: hidden; }
+        
+        /* Layout */
+        .sidebar { width: 64px; background-color: #1e293b; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px 0; flex-shrink: 0; }
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .dashboard-grid { padding: 20px; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 20px; height: 100%; overflow-y: auto; }
+
+        /* Sidebar Icons */
+        .nav-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; cursor: pointer; transition: 0.2s; color: #94a3b8; }
+        .nav-icon:hover { background: #334155; color: white; }
+        .nav-icon.active { background: #3b82f6; color: white; }
+        .nav-icon svg { width: 24px; height: 24px; }
+
+        /* Card System */
+        .card { background: white; border-radius: 16px; border: 1px solid #e2e8f0; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .card-header { padding: 16px; border-bottom: 1px solid #f1f5f9; font-weight: 700; font-size: 16px; display: flex; justify-content: space-between; align-items: center; color: #1e293b; }
+        .card-body { padding: 0; flex: 1; overflow-y: auto; position: relative; }
+
+        /* Market (Top Left) */
+        .market-stat-row { display: flex; padding: 16px; gap: 24px; border-bottom: 1px solid #f1f5f9; }
+        .stat-item label { font-size: 12px; color: #64748b; display: block; margin-bottom: 4px; }
+        .stat-item value { font-size: 20px; font-weight: 700; font-family: 'Courier New', monospace; }
+        .chart-placeholder { flex: 1; background: #f8fafc; display: flex; align-items: center; justify-content: center; color: #94a3b8; position: relative; }
+        .chart-line { position: absolute; bottom: 0; left: 0; width: 100%; height: 60%; opacity: 0.2; background: linear-gradient(to top, #3b82f6, transparent); clip-path: polygon(0 100%, 0 60%, 20% 40%, 40% 70%, 60% 30%, 80% 50%, 100% 20%, 100% 100%); }
+        
+        /* News Feed (Top Right) */
+        .news-feed { padding: 0; }
+        .news-item { padding: 16px; border-bottom: 1px solid #f1f5f9; display: flex; gap: 12px; transition: 0.2s; cursor: pointer; }
+        .news-item:hover { background: #f8fafc; }
+        .news-sentiment { width: 4px; border-radius: 2px; flex-shrink: 0; }
+        .sentiment-bullish { background: #22c55e; }
+        .sentiment-bearish { background: #ef4444; }
+        .news-content h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; line-height: 1.4; }
+        .news-meta { font-size: 11px; color: #64748b; display: flex; gap: 8px; align-items: center; }
+        .source-tag { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+
+        /* Gamified Agents (Bottom Left) */
+        .agent-stage { background: #f0f9ff; height: 100%; padding: 20px; display: flex; justify-content: space-around; align-items: flex-end; position: relative; overflow: hidden; }
+        .agent-char { display: flex; flex-direction: column; align-items: center; position: relative; width: 80px; transition: 0.3s; }
+        .agent-avatar { width: 60px; height: 60px; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background: white; display: flex; align-items: center; justify-content: center; font-size: 30px; position: relative; z-index: 2; }
+        .agent-body { width: 40px; height: 30px; background: #cbd5e1; border-radius: 20px 20px 0 0; margin-top: -10px; z-index: 1; }
+        .agent-name { margin-top: 8px; font-size: 12px; font-weight: 700; color: #475569; background: white; padding: 2px 8px; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        
+        /* Agent States */
+        .agent-active .agent-avatar { border-color: #3b82f6; transform: scale(1.1); box-shadow: 0 0 15px rgba(59, 130, 246, 0.3); }
+        .agent-active .agent-body { background: #3b82f6; }
+        .agent-active .agent-name { color: #3b82f6; }
+
+        /* Dialogue Bubble */
+        .bubble { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: white; padding: 12px 16px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 80%; width: 300px; text-align: center; font-size: 13px; font-weight: 500; border: 1px solid #e2e8f0; animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); z-index: 10; }
+        .bubble::after { content: ''; position: absolute; bottom: -8px; left: 20%; width: 16px; height: 16px; background: white; transform: rotate(45deg); border-bottom: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; }
+        
+        /* Portfolio (Bottom Right) */
+        .pnl-big { font-size: 32px; font-weight: 800; font-family: 'Courier New', monospace; margin-bottom: 4px; }
+        .pnl-positive { color: #16a34a; }
+        .trade-history { margin-top: 16px; }
+        .trade-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px dashed #e2e8f0; font-size: 13px; }
+        .badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .badge-buy { background: #dcfce7; color: #166534; }
+        .badge-sell { background: #fee2e2; color: #991b1b; }
+
+        @keyframes popIn { from { opacity: 0; transform: translateX(-50%) scale(0.8); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+
+    <aside class="sidebar">
+        <div class="nav-icon active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+        </div>
+        <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+        </div>
+        <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <div class="dashboard-grid">
+            
+            <!-- 1. Market (Top Left) -->
+            <div class="card">
+                <div class="card-header">Market Overview</div>
+                <div class="card-body" style="display: flex; flex-direction: column;">
+                    <div class="market-stat-row">
+                        <div class="stat-item">
+                            <label>BTC/USDT</label>
+                            <value>$64,230.50</value>
+                        </div>
+                        <div class="stat-item">
+                            <label>24h Change</label>
+                            <value style="color: #16a34a;">+2.45%</value>
+                        </div>
+                        <div class="stat-item">
+                            <label>Signal</label>
+                            <value style="font-size: 14px; background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 4px;">STRONG BUY</value>
+                        </div>
+                    </div>
+                    <div class="chart-placeholder">
+                        [ Interactive K-Line Chart ]
+                        <div class="chart-line"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. News Feed (Top Right) -->
+            <div class="card">
+                <div class="card-header">
+                    <span>Intelligence Feed</span>
+                    <span style="font-size: 12px; background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 12px;">Live</span>
+                </div>
+                <div class="card-body news-feed">
+                    <div class="news-item">
+                        <div class="news-sentiment sentiment-bullish"></div>
+                        <div class="news-content">
+                            <h4>BlackRock iShares Bitcoin ETF sees record inflows</h4>
+                            <div class="news-meta">
+                                <span class="source-tag">CoinDesk</span>
+                                <span>2m ago</span>
+                                <span style="color: #16a34a; font-weight: 700;">Bullish (0.8)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="news-item">
+                        <div class="news-sentiment sentiment-bearish"></div>
+                        <div class="news-content">
+                            <h4>SEC delays decision on Ethereum ETF applications</h4>
+                            <div class="news-meta">
+                                <span class="source-tag">TheBlock</span>
+                                <span>15m ago</span>
+                                <span style="color: #dc2626; font-weight: 700;">Bearish (-0.6)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="news-item">
+                        <div class="news-sentiment sentiment-bullish"></div>
+                        <div class="news-content">
+                            <h4>Whale Alert: 5,000 BTC transferred to Cold Wallet</h4>
+                            <div class="news-meta">
+                                <span class="source-tag">Twitter</span>
+                                <span>42m ago</span>
+                                <span style="color: #16a34a; font-weight: 700;">Bullish (0.5)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Gamified Agents (Bottom Left) -->
+            <div class="card">
+                <div class="card-header">Agent Workspace</div>
+                <div class="card-body">
+                    <div class="agent-stage">
+                        
+                        <!-- Dialogue Bubble -->
+                        <div class="bubble">
+                            Thinking... I see a potential breakout on the 15m chart. RSI is cooling off, but volume is increasing.
+                        </div>
+
+                        <!-- Strategist -->
+                        <div class="agent-char agent-active">
+                            <div class="agent-avatar">🧠</div>
+                            <div class="agent-body"></div>
+                            <div class="agent-name">Strategist</div>
+                        </div>
+
+                        <!-- Reviewer -->
+                        <div class="agent-char">
+                            <div class="agent-avatar">🛡️</div>
+                            <div class="agent-body"></div>
+                            <div class="agent-name">Reviewer</div>
+                        </div>
+
+                        <!-- Executor -->
+                        <div class="agent-char">
+                            <div class="agent-avatar">⚡</div>
+                            <div class="agent-body"></div>
+                            <div class="agent-name">Executor</div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Portfolio (Bottom Right) -->
+            <div class="card">
+                <div class="card-header">Live Portfolio</div>
+                <div class="card-body" style="padding: 20px;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <div style="font-size: 13px; color: #64748b; margin-bottom: 4px;">Total Equity</div>
+                        <div class="pnl-big">$12,450.00</div>
+                        <div class="pnl-positive" style="font-weight: 600;">+ $1,240.50 (Today)</div>
+                    </div>
+
+                    <div style="font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 8px;">Recent Executions</div>
+                    <div class="trade-history">
+                        <div class="trade-row">
+                            <span>BTC/USDT</span>
+                            <span class="badge badge-buy">BUY</span>
+                            <span style="font-family: monospace;">64,210.50</span>
+                            <span style="color: #94a3b8;">2m ago</span>
+                        </div>
+                        <div class="trade-row">
+                            <span>ETH/USDT</span>
+                            <span class="badge badge-sell">SELL</span>
+                            <span style="font-family: monospace;">3,450.00</span>
+                            <span style="color: #94a3b8;">15m ago</span>
+                        </div>
+                         <div class="trade-row">
+                            <span>SOL/USDT</span>
+                            <span class="badge badge-buy">BUY</span>
+                            <span style="font-family: monospace;">142.80</span>
+                            <span style="color: #94a3b8;">1h ago</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+</body>
+</html>

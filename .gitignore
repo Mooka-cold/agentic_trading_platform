@@ -1,20 +1,65 @@
-# Frontend
-/frontend/node_modules
-/frontend/.next
+# --- General ---
+.DS_Store
+Thumbs.db
+*.log
 
-# Backend
-/backend/__pycache__
-/backend/venv
+# --- IDEs ---
+.vscode/
+.idea/
+.trae/
+*.swp
+*.swo
+
+# --- Python General ---
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+build/
+dist/
+venv/
+.venv/
+env/
+.env/
+
+# --- Node.js / Frontend ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.next/
+out/
+.vercel/
+
+# --- Environment Variables ---
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+*.env.*
+!.env.example
 
-# AI Engine
-/ai_engine/__pycache__
-/ai_engine/venv
+# --- Database & Local Data ---
+chroma_db/*.sqlite3
+*.db
+*.sqlite
+docker/timescaledb_data/
+docker/postgres_user_data/
+docker/chroma_data/
 
+# --- Project Specific ---
 # Freqtrade
 /trading_bot/user_data/backtest_results
 /trading_bot/user_data/plot
 /trading_bot/.freqtrade
 
-# Docker
-.DS_Store
+# Test Outputs
+tests/mcp/output/

@@ -7,6 +7,7 @@ from app.core.interfaces import MarketTick, NewsItem
 from app.services.ingestion.factory import DataConnectorFactory
 from app.services.calculation.engine import IndicatorEngine
 from app.services.news.sources.cryptopanic import CryptoPanicFetcher
+from app.services.redis_stream import redis_stream
 from app.core.config import settings
 
 # Configure logging
@@ -68,6 +69,14 @@ class MarketOrchestrator:
             # Log significant signals
             if signals:
                 logger.info(f"SIGNALS DETECTED [{tick.symbol}]: {signals}")
+                
+                # Publish to Redis for AI Engine
+                await redis_stream.publish_message("market_signals", {
+                    "symbol": tick.symbol,
+                    "signals": signals,
+                    "price": tick.price,
+                    "timestamp": tick.timestamp.isoformat()
+                })
 
     async def _news_loop(self):
         async for news_item in self.news_fetcher.listen():

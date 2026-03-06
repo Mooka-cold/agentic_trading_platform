@@ -1,30 +1,55 @@
-# AI Crypto Trading Platform (AI 量化与决策平台)
+# 🤖 AI Crypto Trading Platform (AI 量化决策终端)
 
-[![Status](https://img.shields.io/badge/Status-In%20Progress-yellow)](https://github.com/your-repo)
+[![Status](https://img.shields.io/badge/Status-Active%20Development-green)](https://github.com/your-repo)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Stack](https://img.shields.io/badge/Tech-FastAPI%20%7C%20Next.js%20%7C%20TimescaleDB-orange)](docs/TECHNICAL_DESIGN.md)
 
-一个基于 AI 的一体化加密货币量化交易平台。集成了新闻聚合、实时行情、LLM 智能决策和自动化交易执行。
+> **Where Data Meets Cognitive Alpha.**  
+> 一个不仅仅是展示行情，更能“读懂”新闻、感知情绪、并像资深交易员一样思考的 AI 决策平台。
 
-## 📖 文档导航 (Documentation)
+---
 
-*   [需求文档 (Requirements)](docs/REQUIREMENTS.md) - 项目核心目标与功能列表。
-*   [产品设计 (Product Design)](docs/PRODUCT_DESIGN.md) - UI/UX 设计、功能模块与交互流程。
-*   [技术架构 (Technical Design)](docs/TECHNICAL_DESIGN.md) - 系统架构、技术栈选型与数据库设计。
+## ✨ 核心亮点 (Why This Platform?)
 
-## 🚀 核心特性 (Key Features)
+传统的量化交易依赖于硬编码的逻辑（Logic-Driven），而本平台致力于实现 **数据驱动 (Data-Driven)** 与 **认知变现 (Cognitive Alpha)**。
 
-*   **智能信息流 (AI Observer)**: 实时聚合 CryptoPanic、Twitter 等多源新闻，利用 NLP (FinBERT/LLM) 自动进行情感打分，一目了然地展示市场利好/利空。
-*   **AI 决策大脑 (AI Strategist)**: 基于 RAG (检索增强生成) 技术，结合历史新闻和技术指标 (RSI, MACD)，像资深交易员一样思考并给出买卖建议。
-*   **自动化交易 (AI Trader)**: 无缝对接 Freqtrade 交易引擎，支持策略回测、参数优化和实盘自动执行。
-*   **现代化仪表盘**: 基于 Next.js + Tailwind CSS + TradingView 图表库构建的专业级交易终端界面。
+*   **🧠 AI 决策大脑**: 利用 LLM (GPT-4/DeepSeek) + RAG 技术，结合历史行情与实时新闻，生成具备逻辑解释的交易建议。
+*   **📰 智能情报网**: 实时聚合 CryptoPanic、Twitter 等多源信息，通过 NLP 模型自动计算情感得分（利好/利空），一眼看穿市场情绪。
+*   **⚡ 毫秒级行情**: 基于 WebSocket 的实时数据流，配合 **TimescaleDB** 高性能时序数据库，秒级计算 RSI, MACD, Bollinger Bands 等核心指标。
+*   **🔄 自我进化**: 独特的 "Reflector" Agent 机制，能对每一次交易进行复盘反思，不断优化策略逻辑。
+
+## 🚀 最新更新 (What's New in v0.2.0)
+
+*   **双数据库架构**: 将用户数据 (PostgreSQL) 与海量行情数据 (TimescaleDB) 彻底拆分，大幅提升并发读写性能。
+*   **实时指标面板**: Dashboard 新增“最新指标卡”，实时展示 SMA, EMA, ATR 等技术指标，并精确标注计算基于的 K 线时间。
+*   **数据回补 (Backfill)**: 支持一键从数据库最早记录向前回补历史数据，确保指标计算的连续性。
+*   **增强型新闻流**: 修复了新闻源聚合问题，现在能更稳定地抓取并分析全球市场动态。
 
 ## 🛠️ 技术栈 (Tech Stack)
 
-*   **Frontend**: Next.js 14, TypeScript, Tailwind CSS, Shadcn/ui, Lightweight-charts
-*   **Backend**: Python, FastAPI, Celery
-*   **Database**: TimescaleDB (Time-series), PostgreSQL (Relational), ChromaDB (Vector)
-*   **AI & NLP**: LangChain, OpenAI GPT-4o / DeepSeek, FinBERT
-*   **Trading Engine**: Freqtrade, CCXT Pro
+### Backend (The Brain)
+*   **Core**: Python 3.10+, FastAPI
+*   **AI**: LangChain, OpenAI/DeepSeek API, FinBERT (Sentiment)
+*   **Data**: 
+    *   **TimescaleDB** (Market Data & Indicators)
+    *   **PostgreSQL** (User & Strategy Config)
+    *   **ChromaDB** (Vector Memory for RAG)
+    *   **Redis** (Real-time Pub/Sub & Caching)
+*   **Task Queue**: Celery (Async Jobs)
+
+### Frontend (The Face)
+*   **Framework**: Next.js 14 (App Router), TypeScript
+*   **UI**: Tailwind CSS, Shadcn/ui
+*   **Charts**: Lightweight-charts (TradingView style)
+
+## 📖 文档导航 (Documentation)
+
+详细的设计文档位于 `docs/` 目录下：
+
+*   [📚 需求文档 (REQUIREMENTS.md)](docs/REQUIREMENTS.md) - 核心功能列表与业务目标。
+*   [🎨 产品设计 (PRODUCT_DESIGN.md)](docs/PRODUCT_DESIGN.md) - UI/UX 交互流程与界面设计。
+*   [🏗️ 技术架构 (TECHNICAL_DESIGN.md)](docs/TECHNICAL_DESIGN.md) - 系统架构图与数据库设计。
+*   [🏛️ 系统架构 V2 (SYSTEM_ARCHITECTURE_V2.md)](docs/SYSTEM_ARCHITECTURE_V2.md) - 面向万级并发的企业级架构演进。
 
 ## 📦 快速开始 (Getting Started)
 
@@ -35,25 +60,26 @@
 
 ### 安装步骤
 
-1.  克隆仓库:
+1.  **克隆仓库**:
     ```bash
     git clone https://github.com/your-username/ai-crypto-trading.git
     cd ai-crypto-trading
     ```
 
-2.  启动基础服务 (DB, Redis):
+2.  **启动基础服务** (DBs, Redis, Chroma):
     ```bash
-    docker-compose up -d db redis
+    docker-compose up -d db-users db-market redis chromadb
     ```
 
-3.  后端开发环境:
+3.  **启动后端**:
     ```bash
     cd backend
     pip install -r requirements.txt
-    uvicorn main:app --reload
+    # 首次运行需初始化数据库
+    python main.py
     ```
 
-4.  前端开发环境:
+4.  **启动前端**:
     ```bash
     cd frontend
     npm install
@@ -61,7 +87,7 @@
     ```
 
 ## 🤝 贡献 (Contributing)
-欢迎提交 Issue 和 Pull Request！
+欢迎提交 Issue 和 Pull Request！让我们一起构建下一代 AI 交易终端。
 
 ## 📄 许可证 (License)
-本项目采用 MIT 许可证。详情请见 [LICENSE](LICENSE) 文件。
+MIT License.

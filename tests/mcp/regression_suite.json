@@ -1,0 +1,103 @@
+{
+  "name": "ai_trading_mcp_regression",
+  "base_url": "http://localhost:3200",
+  "api_base": "http://localhost:3201",
+  "steps": [
+    {
+      "id": "open_dashboard",
+      "action": "navigate",
+      "url": "/"
+    },
+    {
+      "id": "dashboard_title",
+      "action": "wait_for_text",
+      "text": "Market Dashboard"
+    },
+    {
+      "id": "market_intelligence",
+      "action": "wait_for_text",
+      "text": "Market Intelligence"
+    },
+    {
+      "id": "open_history",
+      "action": "click_nav",
+      "label": "History",
+      "url": "/history"
+    },
+    {
+      "id": "history_title",
+      "action": "wait_for_text",
+      "text": "Decision History"
+    },
+    {
+      "id": "recent_sessions",
+      "action": "wait_for_text",
+      "text": "Recent Sessions"
+    },
+    {
+      "id": "open_settings",
+      "action": "click_nav",
+      "label": "Settings",
+      "url": "/settings"
+    },
+    {
+      "id": "settings_title",
+      "action": "wait_for_text",
+      "text": "System Settings"
+    },
+    {
+      "id": "open_schedule_tab",
+      "action": "click_button",
+      "label": "Schedule"
+    },
+    {
+      "id": "continuous_mode",
+      "action": "wait_for_text",
+      "text": "Continuous Mode (AI Loop)"
+    },
+    {
+      "id": "start_loop",
+      "action": "click_button",
+      "label": "Start Loop"
+    },
+    {
+      "id": "loop_running",
+      "action": "wait_for_text",
+      "text": "RUNNING"
+    },
+    {
+      "id": "stop_loop",
+      "action": "click_button",
+      "label": "Stop Loop"
+    },
+    {
+      "id": "loop_stopped",
+      "action": "wait_for_text",
+      "text": "STOPPED"
+    },
+    {
+      "id": "api_sync_news",
+      "action": "http_post",
+      "url": "/api/v1/jobs/sync-news",
+      "expect_status": 200
+    },
+    {
+      "id": "api_analyze",
+      "action": "http_post",
+      "url": "/api/v1/jobs/analyze",
+      "expect_status": 200
+    }
+  ],
+  "assertions": [
+    {
+      "id": "no_console_errors",
+      "action": "console_no_errors"
+    },
+    {
+      "id": "favicon_ok",
+      "action": "network_request",
+      "url_contains": "/favicon.ico",
+      "expect_status": [200, 404]
+    }
+  ]
+}

@@ -1,91 +1,159 @@
 version: '3.8'
 
 services:
-  # --- Infrastructure ---
-  timescaledb:
-    image: timescale/timescaledb:latest-pg14
+  # User & Strategy Database (PostgreSQL)
+  db-users:
+    image: postgres:15-alpine
+    container_name: ai_trading-db-users
+    restart: always
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=pass
-      - POSTGRES_DB=trading
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: user_admin
+      POSTGRES_PASSWORD: user_password
+      POSTGRES_DB: ai_trading_users
     volumes:
-      - ./docker/timescaledb_data:/var/lib/postgresql/data
-    networks:
-      - trading-net
-
-  redis:
-    image: redis:alpine
+      - postgres_user_data:/var/lib/postgresql/data
     ports:
-      - "6379:6379"
+      - "3205:5432"
     networks:
-      - trading-net
+      - ai_trading_net
 
+  # Market Data Time-Series Database (TimescaleDB)
+  db-market:
+    image: timescale/timescaledb:latest-pg15
+    container_name: ai_trading-db-market
+    restart: always
+    environment:
+      POSTGRES_USER: market_admin
+      POSTGRES_PASSWORD: market_password
+      POSTGRES_DB: ai_trading_market
+    volumes:
+      - timescale_market_data:/var/lib/postgresql/data
+      - ./docker/timescaledb/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3206:5432"
+    networks:
+      - ai_trading_net
+
+  # Vector Database for News/RAG (ChromaDB)
   chromadb:
     image: chromadb/chroma:latest
     ports:
-      - "8001:8000"
+      - "3203:8000"
     volumes:
-      - ./docker/chroma_data:/chroma/chroma
+      - chroma_data:/chroma/chroma
     networks:
-      - trading-net
+      - ai_trading_net
 
-  # --- Application Services ---
-  backend:
-    build: ./backend
+  # Cache & Message Broker (Redis)
+  redis:
+    image: redis:alpine
+    restart: always
     ports:
-      - "8000:8000"
+      - "3204:6379"
+    networks:
+      - ai_trading_net
+
+  # Backend API (FastAPI)
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3201:8000"
     environment:
-      - TIMESCALE_URI=postgresql://user:pass@timescaledb:5432/trading
+      - DATABASE_USER_URL=postgresql://user_admin:user_password@db-users:5432/ai_trading_users
+      - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
       - REDIS_URL=redis://redis:6379/0
-      - AI_ENGINE_URL=http://ai-engine:8000
+      - CHROMA_URL=http://chromadb:8000
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - NEWS_API_KEY=${NEWS_API_KEY}
     depends_on:
-      - timescaledb
+      - db-users
+      - db-market
       - redis
     volumes:
       - ./backend:/app
     networks:
-      - trading-net
+      - ai_trading_net
 
+  # AI Engine (Strategy Worker)
   ai-engine:
-    build: ./ai_engine
+    build:
+      context: ./ai_engine
+      dockerfile: Dockerfile
     ports:
-      - "8002:8000"
+      - "3202:8000"
     environment:
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
+      - DATABASE_USER_URL=postgresql://user_admin:user_password@db-users:5432/ai_trading_users
+      - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
+      - REDIS_URL=redis://redis:6379/0
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - db-users
+      - db-market
+      - redis
     volumes:
       - ./ai_engine:/app
     networks:
-      - trading-net
+      - ai_trading_net
 
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m app.services.crawler.scheduler
+    volumes:
+      - ./backend:/app
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - AI_ENGINE_URL=http://ai-engine:8000
+      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+    depends_on:
+      - backend
+      - ai-engine
+    networks:
+      - ai_trading_net
+
+  market-streamer:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m app.services.streamer.main
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_USER_URL=postgresql://user_admin:user_password@db-users:5432/ai_trading_users
+      - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db-market
+      - redis
+    restart: always
+    networks:
+      - ai_trading_net
+
+  # Frontend (Next.js)
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3200:3200"
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - /app/.next
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:3201
     networks:
-      - trading-net
-
-  # --- Trading Execution ---
-  # freqtrade:
-  #   image: freqtradeorg/freqtrade:stable
-  #   volumes:
-  #     - ./trading_bot/user_data:/freqtrade/user_data
-  #   command: >
-  #     trade
-  #     --logfile /freqtrade/user_data/logs/freqtrade.log
-  #     --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
-  #     --config /freqtrade/user_data/config.json
-  #     --strategy SampleStrategy
-  #   networks:
-  #     - trading-net
+      - ai_trading_net
 
 networks:
-  trading-net:
+  ai_trading_net:
     driver: bridge
+
+volumes:
+  postgres_user_data:
+  timescale_market_data:
+  chroma_data:

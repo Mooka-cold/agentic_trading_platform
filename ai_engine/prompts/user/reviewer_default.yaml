@@ -1,0 +1,10 @@
+risk_config: |
+  # Risk Limits
+  - Max Drawdown Tolerance: 15%
+  - Sharpe Ratio Target: > 1.5
+  - Max Position Size: 5% of Portfolio
+  
+  # Checks
+  1. Reject if Stop Loss > 3% from entry.
+  2. Reject if Reward/Risk < 1.5.
+  3. Reject if trading during high volatility news (e.g., FOMC).

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trading Terminal - Design Preview</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        slate: {
+                            850: '#1e293b',
+                            900: '#0f172a',
+                            950: '#020617',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #F8FAFC; color: #0F172A; }
+        .glass-card { background: white; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); border-radius: 0.75rem; }
+        .agent-log::-webkit-scrollbar { width: 4px; }
+        .agent-log::-webkit-scrollbar-track { background: transparent; }
+        .agent-log::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden antialiased">
+
+    <!-- Sidebar (Compact) -->
+    <aside class="w-16 bg-white border-r border-slate-200 flex flex-col items-center py-6 gap-6 z-20">
+        <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-blue-200 mb-4">
+            AI
+        </div>
+        
+        <nav class="flex flex-col gap-4 w-full px-2">
+            <a href="#" class="h-10 w-10 mx-auto bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center transition-colors">
+                <i data-lucide="layout-dashboard" width="20"></i>
+            </a>
+            <a href="#" class="h-10 w-10 mx-auto text-slate-400 hover:bg-slate-50 hover:text-slate-600 rounded-lg flex items-center justify-center transition-colors">
+                <i data-lucide="compass" width="20"></i>
+            </a>
+            <a href="#" class="h-10 w-10 mx-auto text-slate-400 hover:bg-slate-50 hover:text-slate-600 rounded-lg flex items-center justify-center transition-colors">
+                <i data-lucide="user" width="20"></i>
+            </a>
+            <div class="border-t border-slate-100 my-2 w-8 mx-auto"></div>
+            <a href="#" class="h-10 w-10 mx-auto text-slate-400 hover:bg-slate-50 hover:text-slate-600 rounded-lg flex items-center justify-center transition-colors">
+                <i data-lucide="settings" width="20"></i>
+            </a>
+        </nav>
+
+        <div class="mt-auto">
+             <a href="#" class="h-10 w-10 mx-auto text-slate-400 hover:text-red-500 rounded-lg flex items-center justify-center transition-colors">
+                <i data-lucide="log-out" width="20"></i>
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col min-w-0">
+        <!-- Header -->
+        <header class="h-16 border-b border-slate-200 bg-white/80 backdrop-blur-sm flex items-center justify-between px-6 sticky top-0 z-10">
+            <div>
+                <h1 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    Dashboard
+                    <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium border border-green-200">System Online</span>
+                </h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-full border border-slate-200">
+                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <span class="text-xs font-mono text-slate-600">API: 42ms</span>
+                </div>
+                <button class="h-8 w-8 rounded-full bg-slate-200 overflow-hidden border border-slate-300">
+                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="User">
+                </button>
+            </div>
+        </header>
+
+        <!-- Dashboard Grid (Bento Box) -->
+        <div class="flex-1 overflow-y-auto p-6">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full min-h-[600px]">
+                
+                <!-- 1. Market Intelligence (Top Left, Span 8) -->
+                <div class="lg:col-span-8 glass-card p-6 flex flex-col">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="font-semibold text-slate-800 flex items-center gap-2">
+                            <i data-lucide="activity" width="18" class="text-blue-500"></i>
+                            Market Overview
+                        </h2>
+                        <div class="flex gap-2">
+                            <button class="px-3 py-1 text-xs font-medium bg-slate-100 rounded-md text-slate-600">1H</button>
+                            <button class="px-3 py-1 text-xs font-medium bg-white border border-slate-200 rounded-md text-slate-400">4H</button>
+                            <button class="px-3 py-1 text-xs font-medium bg-white border border-slate-200 rounded-md text-slate-400">1D</button>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-6 mb-6">
+                        <div class="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                            <div class="text-xs text-slate-500 mb-1">BTC/USDT</div>
+                            <div class="text-xl font-mono font-bold text-slate-900">$64,230.50</div>
+                            <div class="text-xs font-medium text-green-600 flex items-center mt-1">
+                                <i data-lucide="trending-up" width="12" class="mr-1"></i> +2.45%
+                            </div>
+                        </div>
+                        <div class="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                            <div class="text-xs text-slate-500 mb-1">ETH/USDT</div>
+                            <div class="text-xl font-mono font-bold text-slate-900">$3,450.20</div>
+                            <div class="text-xs font-medium text-red-500 flex items-center mt-1">
+                                <i data-lucide="trending-down" width="12" class="mr-1"></i> -0.12%
+                            </div>
+                        </div>
+                        <div class="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                            <div class="text-xs text-slate-500 mb-1">SOL/USDT</div>
+                            <div class="text-xl font-mono font-bold text-slate-900">$145.80</div>
+                            <div class="text-xs font-medium text-green-600 flex items-center mt-1">
+                                <i data-lucide="trending-up" width="12" class="mr-1"></i> +5.12%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Placeholder Chart -->
+                    <div class="flex-1 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-center relative overflow-hidden">
+                        <div class="absolute inset-0 opacity-10" style="background-image: radial-gradient(#94a3b8 1px, transparent 1px); background-size: 20px 20px;"></div>
+                        <span class="text-slate-400 text-sm font-medium">Interactive Chart Area (Lightweight Charts)</span>
+                        <!-- Mock Line -->
+                        <svg class="absolute bottom-0 left-0 w-full h-32 text-blue-500 opacity-20" preserveAspectRatio="none" viewBox="0 0 100 100">
+                            <path d="M0,80 C20,70 40,90 60,50 S80,20 100,40 V100 H0 Z" fill="currentColor"></path>
+                        </svg>
+                        <svg class="absolute bottom-0 left-0 w-full h-32 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" preserveAspectRatio="none" viewBox="0 0 100 100">
+                            <path d="M0,80 C20,70 40,90 60,50 S80,20 100,40"></path>
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- 2. News Feed (Top Right, Span 4) -->
+                <div class="lg:col-span-4 glass-card p-6 flex flex-col">
+                    <h2 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <i data-lucide="newspaper" width="18" class="text-purple-500"></i>
+                        Intelligence
+                    </h2>
+                    
+                    <div class="flex-1 overflow-y-auto space-y-3 pr-2 agent-log">
+                        <!-- News Item 1 -->
+                        <div class="p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-100 group">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded uppercase">CoinDesk</span>
+                                <span class="text-[10px] text-slate-400">2m ago</span>
+                            </div>
+                            <h3 class="text-sm font-medium text-slate-700 leading-snug mb-1 group-hover:text-blue-600">BlackRock iShares Bitcoin ETF sees record inflows for 3rd consecutive day</h3>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                <span class="text-[10px] text-slate-500 font-medium">Bullish</span>
+                            </div>
+                        </div>
+
+                        <!-- News Item 2 -->
+                        <div class="p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-100 group">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="px-1.5 py-0.5 bg-orange-50 text-orange-600 text-[10px] font-bold rounded uppercase">TheBlock</span>
+                                <span class="text-[10px] text-slate-400">15m ago</span>
+                            </div>
+                            <h3 class="text-sm font-medium text-slate-700 leading-snug mb-1 group-hover:text-blue-600">SEC delays decision on Ethereum ETF applications again</h3>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+                                <span class="text-[10px] text-slate-500 font-medium">Neutral</span>
+                            </div>
+                        </div>
+
+                         <!-- News Item 3 -->
+                         <div class="p-3 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-slate-100 group">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-bold rounded uppercase">Twitter</span>
+                                <span class="text-[10px] text-slate-400">42m ago</span>
+                            </div>
+                            <h3 class="text-sm font-medium text-slate-700 leading-snug mb-1 group-hover:text-blue-600">Whale Alert: 5,000 BTC transferred from Binance to Unknown Wallet</h3>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                <span class="text-[10px] text-slate-500 font-medium">Bullish</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Agent Workspace (Bottom Left, Span 6) -->
+                <div class="lg:col-span-6 glass-card p-6 flex flex-col h-64">
+                    <h2 class="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <i data-lucide="bot" width="18" class="text-indigo-500"></i>
+                        Agent Workspace
+                    </h2>
+                    
+                    <div class="flex-1 bg-slate-900 rounded-xl p-4 font-mono text-xs overflow-y-auto agent-log border border-slate-800 shadow-inner">
+                        <div class="space-y-2">
+                            <div class="flex gap-2">
+                                <span class="text-slate-500">[10:42:01]</span>
+                                <span class="text-blue-400 font-bold">Strategist:</span>
+                                <span class="text-slate-300">Analyzing BTC 15m timeframe. RSI(14) = 32.5 (Oversold).</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <span class="text-slate-500">[10:42:03]</span>
+                                <span class="text-blue-400 font-bold">Strategist:</span>
+                                <span class="text-slate-300">Detected bullish divergence on MACD. Signal strength: 0.75.</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <span class="text-slate-500">[10:42:05]</span>
+                                <span class="text-purple-400 font-bold">Reviewer:</span>
+                                <span class="text-slate-300">Checking risk parameters. Account exposure: 12%. Max DD: 2.1%.</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <span class="text-slate-500">[10:42:06]</span>
+                                <span class="text-purple-400 font-bold">Reviewer:</span>
+                                <span class="text-green-400">Approved. Risk Score: 15/100 (Safe).</span>
+                            </div>
+                            <div class="flex gap-2 animate-pulse">
+                                <span class="text-slate-500">[10:42:08]</span>
+                                <span class="text-emerald-400 font-bold">Executor:</span>
+                                <span class="text-slate-300">Placing LIMIT BUY order @ 64,220. Amount: 0.1 BTC...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Portfolio (Bottom Right, Span 6) -->
+                <div class="lg:col-span-6 glass-card p-6 flex flex-col h-64">
+                    <div class="flex justify-between items-start mb-4">
+                        <h2 class="font-semibold text-slate-800 flex items-center gap-2">
+                            <i data-lucide="wallet" width="18" class="text-emerald-500"></i>
+                            Live Portfolio
+                        </h2>
+                        <div class="text-right">
+                            <div class="text-2xl font-bold font-mono text-slate-900">$12,450.00</div>
+                            <div class="text-xs font-medium text-green-600">+ $1,240.50 (Today)</div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex-1 overflow-hidden">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-100">
+                                <tr>
+                                    <th class="px-3 py-2 font-medium">Symbol</th>
+                                    <th class="px-3 py-2 font-medium">Side</th>
+                                    <th class="px-3 py-2 font-medium">Entry</th>
+                                    <th class="px-3 py-2 font-medium text-right">PnL</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                                <tr>
+                                    <td class="px-3 py-2 font-medium text-slate-700">BTC/USDT</td>
+                                    <td class="px-3 py-2"><span class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[10px] font-bold">LONG</span></td>
+                                    <td class="px-3 py-2 font-mono text-xs">63,850.00</td>
+                                    <td class="px-3 py-2 font-mono text-xs text-right text-green-600">+$380.50</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-3 py-2 font-medium text-slate-700">ETH/USDT</td>
+                                    <td class="px-3 py-2"><span class="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[10px] font-bold">SHORT</span></td>
+                                    <td class="px-3 py-2 font-mono text-xs">3,520.00</td>
+                                    <td class="px-3 py-2 font-mono text-xs text-right text-green-600">+$120.00</td>
+                                </tr>
+                                 <tr>
+                                    <td class="px-3 py-2 font-medium text-slate-700">SOL/USDT</td>
+                                    <td class="px-3 py-2"><span class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[10px] font-bold">LONG</span></td>
+                                    <td class="px-3 py-2 font-mono text-xs">142.50</td>
+                                    <td class="px-3 py-2 font-mono text-xs text-right text-red-500">-$15.20</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

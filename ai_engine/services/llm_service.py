@@ -1,0 +1,83 @@
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+from sqlalchemy import create_engine, text
+import pandas as pd
+from core.config import settings
+from pydantic import BaseModel, Field
+
+# Define output structure
+class Signal(BaseModel):
+    action: str = Field(description="Action to take: BUY, SELL, or HOLD")
+    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
+    reasoning: str = Field(description="Brief explanation for the decision based on technical and sentiment analysis")
+
+class LLMService:
+    def __init__(self):
+        self.llm = ChatOpenAI(
+            model=settings.LLM_MODEL,
+            openai_api_key=settings.OPENAI_API_KEY,
+            openai_api_base=settings.OPENAI_API_BASE,
+            temperature=0.2 # Low temperature for analytical tasks
+        )
+        self.engine = create_engine(settings.DATABASE_MARKET_URL)
+        self.parser = JsonOutputParser(pydantic_object=Signal)
+
+    def get_market_data(self, symbol: str, interval: str = "1m", limit: int = 50) -> str:
+        """Fetch recent OHLCV data and calculate basic indicators"""
+        query = text("""
+            SELECT time, open, high, low, close, volume 
+            FROM market_klines 
+            WHERE symbol = :symbol AND interval = :interval
+            ORDER BY time DESC
+            LIMIT :limit
+        """)
+        
+        with self.engine.connect() as conn:
+            df = pd.read_sql(query, conn, params={"symbol": symbol, "interval": interval, "limit": limit})
+        
+        if df.empty:
+            return "No market data available."
+            
+        # Sort by time ASC for analysis
+        df = df.sort_values("time")
+        
+        # Calculate simple indicators (e.g. SMA)
+        df['SMA_10'] = df['close'].rolling(window=10).mean()
+        df['RSI'] = self.calculate_rsi(df['close'])
+        
+        # Convert to string summary (last 5 rows)
+        summary = df.tail(5).to_string()
+        return summary
+
+    def calculate_rsi(self, series, period=14):
+        delta = series.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+
+    async def analyze(self, symbol: str) -> dict:
+        """
+        Analyze market data using LLM and generate a trading signal.
+        """
+        market_context = self.get_market_data(symbol)
+        
+        # Prompt
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are an expert crypto trading analyst. Analyze the provided market data and generate a trading signal."),
+            ("user", "Symbol: {symbol}\n\nMarket Data (OHLCV + Indicators):\n{market_data}\n\nBased on the technical indicators (RSI, SMA, Price Action), what is your recommendation? Return JSON with action, confidence, and reasoning.\n\n{format_instructions}")
+        ])
+        
+        chain = prompt | self.llm | self.parser
+        
+        try:
+            result = await chain.ainvoke({
+                "symbol": symbol,
+                "market_data": market_context,
+                "format_instructions": self.parser.get_format_instructions()
+            })
+            return result
+        except Exception as e:
+            print(f"LLM Error: {e}")
+            return {"action": "HOLD", "confidence": 0.0, "reasoning": f"Error during analysis: {str(e)}"}

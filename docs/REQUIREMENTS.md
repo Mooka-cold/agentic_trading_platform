@@ -15,14 +15,15 @@
 
 ### 3.1 数据采集与聚合 (Data Aggregation)
 *   **多源新闻抓取**:
-    *   接入 CryptoPanic API、RSS Feeds (CoinDesk, Cointelegraph) 等主流新闻源。
-    *   支持 Twitter (X) 等社交媒体数据的监控（可选）。
+    *   [x] 接入 CryptoPanic API、RSS Feeds (CoinDesk, Cointelegraph) 等主流新闻源。
+    *   [ ] 支持 Twitter (X) 等社交媒体数据的监控（可选）。
 *   **实时行情数据**:
-    *   接入主流交易所（Binance, OKX 等）的 WebSocket 数据。
-    *   提供实时 K 线 (OHLCV)、深度图 (Orderbook) 和成交数据 (Trades)。
-    *   计算常用技术指标 (RSI, MACD, Bollinger Bands 等)。
+    *   [x] 接入主流交易所（Binance, OKX 等）的 WebSocket 数据。
+    *   [x] 提供实时 K 线 (OHLCV)、深度图 (Orderbook) 和成交数据 (Trades)。
+    *   [x] 计算常用技术指标 (RSI, MACD, Bollinger Bands, SMA, EMA, ATR 等)。
+    *   [x] **数据回补 (Backfill)**: 支持从数据库最早时间向前回补历史 K 线数据。
 *   **非结构化数据清洗**:
-    *   将新闻、舆情转化为向量 (Vector) 或情感分数 (Sentiment Score)。
+    *   [x] 将新闻、舆情转化为向量 (Vector) 或情感分数 (Sentiment Score)。
 *   **链上数据集成 (On-Chain Intelligence)**:
     *   监控主流交易所的 **Inflow/Outflow** (资金流向)。
     *   追踪已知 **Whale Wallets** (巨鲸钱包) 的大额异动。
@@ -57,9 +58,10 @@
 
 ### 3.4 用户界面 (User Interface)
 *   **仪表盘 (Dashboard)**:
-    *   左侧展示实时 K 线图表 (TradingView 风格)。
-    *   右侧展示实时新闻流及情感评分。
-    *   底部展示当前持仓、订单状态和 AI 建议日志。
+    *   **实时 K 线图表**: 使用 TradingView 轻量级图表库，展示实时价格走势。
+    *   **最新指标卡 (Latest Indicators)**: 实时展示最新计算出的技术指标（RSI, MACD, Bollinger Bands, ATR 等）及其对应的**真实计算时间**（基于哪根 K 线计算）。
+    *   **新闻流 (News Feed)**: 右侧实时滚动展示聚合新闻及其情感评分（利好/利空）。
+    *   **底部面板**: 展示当前持仓、订单状态和 AI 建议日志。
 *   **交互控制**:
     *   提供简单的聊天界面或按钮，允许用户向 AI 提问或下达指令。
 

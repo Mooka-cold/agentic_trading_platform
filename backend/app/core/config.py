@@ -1,19 +1,48 @@
-from pydantic_settings import BaseSettings
+from typing import List
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "AI Trading Platform"
+    API_V1_STR: str = "/api/v1"
+    DEBUG: bool = False
     
-    # Database
-    TIMESCALE_URI: str = "postgresql://user:pass@timescaledb:5432/trading"
-    
-    # AI Engine
-    AI_ENGINE_URL: str = "http://ai-engine:8000"
-    
-    # Trading Bot
-    TRADING_BOT_URL: str = "http://trading-bot:8080"
+    # CORS
+    BACKEND_CORS_ORIGINS: List[str] = ["*"]
 
-    class Config:
-        case_sensitive = True
+    # Security
+    SECRET_KEY: str = "CHANGE_THIS_TO_A_SECURE_RANDOM_STRING"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
+
+    # Database
+    DATABASE_USER_URL: str
+    DATABASE_MARKET_URL: str
+    
+    # Redis
+    REDIS_URL: str
+    
+    # Vector DB
+    CHROMA_URL: str
+
+    # LLM
+    OPENAI_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
+    
+    # External APIs
+    CRYPTOPANIC_API_KEY: str = ""
+    NEWS_API_KEY: str = ""
+    NEWSAPI_QUERY: str = ""
+    NEWSAPI_DOMAINS: str = ""
+    
+    # Trading
+    TRADING_MODE: str = "PAPER" # PAPER, LIVE
+
+    # External Services
+    AI_ENGINE_URL: str = "http://ai-engine:8000"
+
+    # Risk Management
+    RISK_TRAILING_STOP_PCT: float = 0.02
+    RISK_AI_TRIGGER_PCT: float = -0.005
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 settings = Settings()
