@@ -28,6 +28,7 @@ sh get-docker.sh
 
 # Create project directory
 mkdir -p ~/ai_trading
+mkdir -p ~/ai_trading/init
 cd ~/ai_trading
 ```
 
