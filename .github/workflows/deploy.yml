@@ -81,17 +81,31 @@ jobs:
           script: |
             cd ~/ai_trading
             
-            # Login to GHCR on server
+            # 1. Login to GHCR on server
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Export environment variables for compose
-            export IMAGE_PREFIX=ghcr.io/${{ github.repository }}
+            # 2. Create .env file from GitHub Secrets (Overwrite existing)
+            # This ensures secrets are securely injected and persisted for compose
+            cat <<EOF > .env
+            IMAGE_PREFIX=ghcr.io/${{ github.repository }}
             
-            # Pull latest images
+            # API Keys
+            CRYPTOPANIC_API_KEY=${{ secrets.CRYPTOPANIC_API_KEY }}
+            NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}
+            
+            # Database Passwords (Injection)
+            POSTGRES_USER_PASSWORD=${{ secrets.POSTGRES_USER_PASSWORD }}
+            POSTGRES_MARKET_PASSWORD=${{ secrets.POSTGRES_MARKET_PASSWORD }}
+            EOF
+            
+            # 3. Pull latest images
             docker compose -f docker-compose.prod.yml pull
             
-            # Restart services
+            # 4. Restart services
+            # The .env file created above will be automatically read by docker compose
             docker compose -f docker-compose.prod.yml up -d
             
-            # Clean up old images
+            # 5. Clean up old images
             docker image prune -f
