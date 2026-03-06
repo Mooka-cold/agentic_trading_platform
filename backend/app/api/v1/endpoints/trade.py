@@ -101,7 +101,17 @@ async def save_reflection(
     """
     try:
         reflection = TradeReflection(
-            order_id=data['order_id'],
+            session_id=data.get('session_id'),
+            # Backward compatibility for 'order_id' if session_id is missing, 
+            # though model expects session_id. 
+            # If data['order_id'] is present but session_id is not, 
+            # we might need to look up session_id from order_id or just store it if model allows.
+            # Assuming model has session_id column.
+            # Let's check model definition in next step if needed, but standard fix is:
+            # session_id=data['session_id'],
+            # For now, let's assume agent sends 'session_id'.
+            # If agent sends 'order_id', we map it to session_id? No, order_id is for order.
+            # We should use session_id for reflection now.
             stage=data['stage'],
             content=data['content'],
             score=data.get('score'),

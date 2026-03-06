@@ -150,11 +150,8 @@ def get_workflow_session(session_id: str, db: Session = Depends(get_user_db)):
     logs = db.query(AgentLog).filter(AgentLog.session_id == session.id).order_by(AgentLog.created_at.asc()).all()
     
     # Fetch Reflections
-    # 1. Find orders in this session
-    orders = db.query(PaperOrder).filter(PaperOrder.session_id == session.id).all()
-    reflections = []
-    if orders:
-        reflections = db.query(TradeReflection).filter(TradeReflection.order_id.in_([o.id for o in orders])).all()
+    # 1. Fetch reflections directly by session_id
+    reflections = db.query(TradeReflection).filter(TradeReflection.session_id == session.id).all()
     
     # Convert logs to list
     log_list = [

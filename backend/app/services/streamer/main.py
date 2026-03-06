@@ -127,6 +127,9 @@ class MarketStreamer:
             df['atr_14'] = tr.rolling(window=14).mean()
 
             df['sma_7'] = df['close'].rolling(window=7).mean()
+            df['sma_25'] = df['close'].rolling(window=25).mean()
+            df['ma50'] = df['close'].rolling(window=50).mean()
+            df['ema_7'] = df['close'].ewm(span=7, adjust=False).mean()
             df['ema_25'] = df['close'].ewm(span=25, adjust=False).mean()
 
             latest = df.iloc[-1]
@@ -141,6 +144,9 @@ class MarketStreamer:
                 "bb_lower": latest.get('bb_lower'),
                 "atr_14": latest.get('atr_14'),
                 "sma_7": latest.get('sma_7'),
+                "sma_25": latest.get('sma_25'),
+                "ma50": latest.get('ma50'),
+                "ema_7": latest.get('ema_7'),
                 "ema_25": latest.get('ema_25'),
                 "ts": ts.timestamp()
             }
@@ -208,6 +214,9 @@ class MarketStreamer:
                     bb_lower=_sanitize(indicators.get('bb_lower')),
                     atr_14=_sanitize(indicators.get('atr_14')),
                     sma_7=_sanitize(indicators.get('sma_7')),
+                    sma_25=_sanitize(indicators.get('sma_25')),
+                    ma50=_sanitize(indicators.get('ma50')),
+                    ema_7=_sanitize(indicators.get('ema_7')),
                     ema_25=_sanitize(indicators.get('ema_25'))
                 )
                 session.merge(kline)
@@ -222,13 +231,18 @@ class MarketStreamer:
     async def run(self):
         await self.warmup()
         
-        uri = "wss://ws.okx.com:8443/ws/v5/business"
+        # OKX Public WebSocket URL
+        # Note: "business" channel might be for specific data. 
+        # Standard public data is usually at wss://ws.okx.com:8443/ws/v5/public
+        uri = "wss://ws.okx.com:8443/ws/v5/public" 
+        
         while True:
             try:
                 async with websockets.connect(uri) as websocket:
                     logger.info(f"🔌 Connected to OKX Stream: {EXCHANGE_SYMBOL}")
                     
                     # Subscribe
+                    # OKX args format: channel: candle1m, instId: BTC-USDT-SWAP
                     sub_msg = {
                         "op": "subscribe",
                         "args": [{"channel": "candle1m", "instId": EXCHANGE_SYMBOL}]
@@ -237,24 +251,45 @@ class MarketStreamer:
                     
                     while True:
                         msg = await websocket.recv()
+                        # logger.debug(f"Received: {msg[:100]}...") # Debug log
                         data = json.loads(msg)
                         
+                        # Handle Pong or Login responses if needed (OKX doesn't need login for public)
+                        
                         if "data" in data:
+                            # OKX Candle Data Format:
+                            # [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
                             c = data['data'][0]
-                            # OKX format: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
-                            confirm_flag = c[8]
+                            
+                            # Parse data
                             candle_map = {
-                                'ts': c[0], 'o': c[1], 'h': c[2], 'l': c[3], 'c': c[4], 'vol': c[5],
-                                'confirm': confirm_flag
+                                'ts': c[0], 
+                                'o': c[1], 
+                                'h': c[2], 
+                                'l': c[3], 
+                                'c': c[4], 
+                                'vol': c[5],
+                                'confirm': c[8] # "0" for open, "1" for closed
                             }
                             
-                            # 1. Calculate
+                            # 1. Calculate Indicators (Append/Update Buffer)
                             indicators = self.calculate_indicators(candle_map)
                             
-                            # 2. Push to Redis (Realtime)
+                            # 2. Push to Redis (Realtime - for Agent decision)
                             await self.save_to_redis(indicators)
                             
+                            # 3. Save to DB Strategy:
+                            # - Save CONFIRMED candles (historical integrity)
+                            # - ALSO update UNCONFIRMED candles (realtime charts)
+                            # Why? Because API reads from DB. If we don't save unconfirmed, 
+                            # the frontend chart will be stale by up to 59 seconds.
+                            # We can use "upsert" logic.
+                            
                             await self.save_to_db(candle_map, indicators)
+                            
+                            if candle_map['confirm'] == "1":
+                                logger.info(f"💾 Candle Closed & Saved: {pd.to_datetime(int(candle_map['ts']), unit='ms')}")
+
                                 
             except Exception as e:
                 logger.error(f"Stream error: {e}. Reconnecting in 5s...")

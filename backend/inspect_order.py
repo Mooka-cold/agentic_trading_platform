@@ -31,7 +31,7 @@ def inspect_session(session_id):
                 # Let's check logic.
                 
                 # Check Reflections
-                reflections = db.execute(select(TradeReflection).where(TradeReflection.order_id == order.id)).scalars().all()
+                reflections = db.execute(select(TradeReflection).where(TradeReflection.session_id == session_id)).scalars().all()
                 print(f"   - Reflections: {[r.stage for r in reflections]}")
                 
                 # Calculate elapsed time

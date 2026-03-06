@@ -20,6 +20,7 @@ class MarketKline(Base):
     # Trend
     sma_7 = Column(Float, nullable=True)
     sma_25 = Column(Float, nullable=True)
+    ma50 = Column(Float, nullable=True)
     ema_7 = Column(Float, nullable=True)
     ema_25 = Column(Float, nullable=True)
     

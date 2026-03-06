@@ -60,6 +60,7 @@ class AgentState(BaseModel):
     strategy_proposal: Optional[StrategyProposal] = None
     risk_verdict: Optional[RiskVerdict] = None
     review_feedback: Optional[Dict[str, Any]] = None
+    execution_result: Optional[Dict[str, Any]] = None  # <--- New Field for Execution Result
     strategy_revision_round: int = 0
     
     # --- Meta ---

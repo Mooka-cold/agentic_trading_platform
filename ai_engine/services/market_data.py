@@ -37,7 +37,57 @@ class MarketDataService:
         - Latest Price & Volume
         - Technical Indicators (RSI, MACD, etc. on 1m/5m)
         """
-        # Fetch 1m data (enough for indicators)
+        import logging
+        logger = logging.getLogger("ai_engine.market_data")
+        
+        # 1. Try to get latest pre-calculated indicators from DB (limit=1)
+        limit = 1
+        
+        # We need to explicitly select indicator columns, as _fetch_ohlcv only gets OHLCV
+        # Let's create a specialized query for this
+        query = text("""
+            SELECT 
+                time, close, volume,
+                rsi_14, macd, macd_signal, macd_hist,
+                bb_upper, bb_middle, bb_lower,
+                atr_14, sma_7, sma_25, ma50, ema_7, ema_25
+            FROM market_klines 
+            WHERE symbol = :symbol AND interval = '1m'
+            ORDER BY time DESC
+            LIMIT 1
+        """)
+        
+        try:
+            with self.engine.connect() as conn:
+                row = conn.execute(query, {"symbol": symbol}).fetchone()
+                
+            if row:
+                # Check freshness (e.g. within last 2 minutes)
+                last_ts = row.time.timestamp()
+                now_ts = pd.Timestamp.now().timestamp()
+                
+                # If data is fresh enough (e.g. < 120s old), use DB values
+                # Note: Streamer updates every minute, so 2 mins is a safe buffer
+                if now_ts - last_ts < 120:
+                    logger.info(f"✅ [MarketData] Using DB indicators for {symbol} (Freshness: {now_ts - last_ts:.1f}s)")
+                    return {
+                        "price": float(row.close),
+                        "volume": float(row.volume),
+                        "indicators": {
+                            "rsi": float(row.rsi_14) if row.rsi_14 is not None else 0.0,
+                            "macd": float(row.macd) if row.macd is not None else 0.0,
+                            # Add others if needed by agent, currently only RSI/MACD are core
+                        },
+                        "source": "database",
+                        "timestamp": last_ts
+                    }
+                else:
+                    logger.warning(f"⚠️ [MarketData] DB data stale for {symbol} ({now_ts - last_ts:.1f}s old). Triggering on-the-fly recalc.")
+        except Exception as e:
+            logger.error(f"⚠️ [MarketData] DB snapshot fetch failed: {e}")
+
+        # 2. Fallback: On-the-fly calculation with 100 candles
+        logger.info(f"🔄 [MarketData] Performing on-the-fly calculation for {symbol} (using last 100 candles)")
         limit = 100
         df = self._fetch_ohlcv(symbol, "1m", limit)
         
@@ -45,12 +95,12 @@ class MarketDataService:
             return {
                 "price": 0.0,
                 "volume": 0.0,
-                "indicators": {}
+                "indicators": {},
+                "source": "empty",
+                "timestamp": 0
             }
             
-        # Calculate Indicators on 1m timeframe (for immediate context)
-        # Note: Analyst Agent uses get_multi_timeframe_context for deeper analysis.
-        # This snapshot is for the 'MarketData' state object used by other agents.
+        # Calculate Indicators on 1m timeframe
         df['RSI'] = self.calculate_rsi(df['close'])
         macd, sig, hist = self.calculate_macd(df['close'])
         df['MACD'] = macd
@@ -63,7 +113,9 @@ class MarketDataService:
             "indicators": {
                 "rsi": float(last['RSI']) if not pd.isna(last['RSI']) else 0.0,
                 "macd": float(last['MACD']) if not pd.isna(last['MACD']) else 0.0
-            }
+            },
+            "source": "calculated",
+            "timestamp": last.name.timestamp() if hasattr(last.name, 'timestamp') else 0
         }
 
     def get_market_context(self, symbol: str, interval: str = "1m", limit: int = 50) -> str:

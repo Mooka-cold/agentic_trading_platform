@@ -314,7 +314,10 @@ class Strategist(BaseAgent):
                         "risk": report.key_risk,
                         "reasoning": proposal.reasoning,
                         "assumptions": proposal.assumptions,
-                        "revision": state.strategy_revision_round
+                        "revision": state.strategy_revision_round,
+                        "account_balance": state.account_balance,
+                        "current_positions": positions_str,
+                        "market_price": state.market_data.price
                     }
                 )
             else:
@@ -345,7 +348,10 @@ class Strategist(BaseAgent):
                         "assumptions": proposal.assumptions,
                         "sl_distance_pct": metrics.get("sl_distance_pct"),
                         "direction_ok": metrics.get("direction_ok"),
-                        "revision": state.strategy_revision_round
+                        "revision": state.strategy_revision_round,
+                        "account_balance": state.account_balance,
+                        "current_positions": positions_str,
+                        "market_price": state.market_data.price
                     }
                 )
                 
@@ -498,13 +504,15 @@ class Reviewer(BaseAgent):
             
             if verdict.approved:
                 await self.say(
-                    f"APPROVED. Risk Score: {verdict.risk_score}/100.", 
+                    f"APPROVED {proposal.action} {state.market_data.symbol}. Risk Score: {verdict.risk_score}/100.", 
                     session_id,
                     artifact={
                         "verdict": "APPROVED",
                         "score": verdict.risk_score,
-                        "checks": verdict.checks
-                    }
+                        "checks": verdict.checks,
+                        "action": proposal.action
+                    },
+                    symbol=state.market_data.symbol
                 )
                 
                 # --- Execute Order ---
@@ -515,6 +523,8 @@ class Reviewer(BaseAgent):
                         symbol=state.market_data.symbol,
                         quantity=proposal.quantity or 0.001,
                         price=state.market_data.price,
+                        stop_loss=proposal.stop_loss,
+                        take_profit=proposal.take_profit,
                         confidence=proposal.confidence,
                         session_id=session_id
                     )
@@ -643,7 +653,8 @@ class Reflector(BaseAgent):
                 await client.post(
                     f"{settings.BACKEND_URL}/api/v1/trade/reflection",
                     json={
-                        "order_id": order_id,
+                        "session_id": session_id,
+                        "order_id": order_id, # Optional for backward compatibility
                         "stage": "IMMEDIATE",
                         "content": content,
                         "score": 80.0 # Parse from content
