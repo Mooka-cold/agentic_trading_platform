@@ -82,23 +82,45 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "docker-compose.prod.yml"
           target: "~/ai_trading/"
-
-      - name: Deploy to Server
-        uses: appleboy/ssh-action@master
+      
+      - name: Copy SQL init script to server (Fix for TimescaleDB init)
+        uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker/timescaledb/init.sql"
+          target: "~/ai_trading/"
+
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@master
+        env:
+          # Pass the lowercased image name from previous step or env
+          # Since 'env' context is not shared between jobs directly in this way without outputs,
+          # we can just use the github.repository context and rely on shell manipulation on the runner or server.
+          # BUT, appleboy/ssh-action runs script on remote server.
+          # The safest way is to use the GITHUB_REPOSITORY context and downcase it in the script.
+          # However, bash ${VAR,,} is available in bash 4.0+.
+          # Let's try to pass it explicitly.
+          REPO_NAME: ${{ github.repository }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: REPO_NAME
           script: |
             cd ~/ai_trading
             
             # 1. Login to GHCR on server
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
+            # Downcase repository name for Docker image tag
+            LOWER_REPO_NAME=$(echo $REPO_NAME | tr '[:upper:]' '[:lower:]')
+            
             # 2. Create .env file from GitHub Secrets (Overwrite existing)
             # This ensures secrets are securely injected and persisted for compose
             cat <<EOF > .env
-            IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY,,}
+            IMAGE_PREFIX=ghcr.io/$LOWER_REPO_NAME
             
             # API Keys
             CRYPTOPANIC_API_KEY=${{ secrets.CRYPTOPANIC_API_KEY }}
