@@ -596,12 +596,45 @@ class Reflector(BaseAgent):
             except Exception as e:
                 await self.think(f"Immediate review failed: {e}", session_id)
 
-        # 2. Immediate Reflection (Existing Logic - Context Archive)
-        if not state.strategy_proposal or not state.analyst_report:
-            return {}
+        # 2. Immediate Reflection on Decision (NEW)
+        # Even for OPEN or HOLD, we want to log a reflection on WHY we made this decision.
+        if state.strategy_proposal:
+            await self.run_decision_reflection(state, session_id)
 
-        # ... (Rest of existing logic for context archiving) ...
         return {}
+
+    async def run_decision_reflection(self, state: AgentState, session_id: str):
+        """
+        Reflect on the immediate decision (Buy/Sell/Hold) and the reasoning path.
+        """
+        action = state.strategy_proposal.action
+        bias = state.analyst_report.trading_bias if state.analyst_report else "UNKNOWN"
+        
+        reflection_msg = f"Reflecting on decision to {action} (Bias: {bias})..."
+        await self.think(reflection_msg, session_id)
+        
+        # Construct a simple self-critique prompt
+        # For MVP, we'll just summarize the logic chain
+        
+        summary = (
+            f"Decision: {action}\n"
+            f"Analyst Bias: {bias}\n"
+            f"Strategist Confidence: {state.strategy_proposal.confidence}\n"
+            f"Risk Verdict: {'APPROVED' if state.risk_verdict and state.risk_verdict.approved else 'REJECTED'}"
+        )
+        
+        # In a full system, we'd ask LLM: "Did I miss anything? Was this consistent?"
+        # Here we just log it as a structured reflection artifact.
+        
+        await self.say(
+            f"REFLECTION: Decision process for {action} archived.", 
+            session_id,
+            artifact={
+                "type": "DECISION_REFLECTION",
+                "summary": summary,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
 
     async def run_immediate_review(self, order_id: str, exec_result: dict, session_id: str):
         """
