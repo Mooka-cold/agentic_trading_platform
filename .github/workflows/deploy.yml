@@ -46,8 +46,7 @@ jobs:
       - name: Build and push AI Engine image
         uses: docker/build-push-action@v4
         with:
-          context: .
-          file: ./ai_engine/Dockerfile
+          context: ./ai_engine
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-engine:latest
 
