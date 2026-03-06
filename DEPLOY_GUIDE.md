@@ -39,15 +39,15 @@ cd ~/ai_trading
 
 | Secret Name | Description | Example Value |
 | :--- | :--- | :--- |
-| `SERVER_HOST` | 你的服务器 IP 地址 | `128.199.xx.xx` |
+| `SERVER_HOST` | 你的服务器 IP 地址 | (购买后填写，如 `128.199.xx.xx`) |
 | `SERVER_USER` | SSH 用户名 | `root` |
 | `SSH_PRIVATE_KEY` | 你的 SSH 私钥内容 | `-----BEGIN OPENSSH PRIVATE KEY----- ...` |
-| `CRYPTOPANIC_API_KEY` | CryptoPanic API Key | `74e5...` |
-| `NEWS_API_KEY` | NewsAPI Key | `abc...` |
-| `OPENAI_API_KEY` | OpenAI API Key | `sk-...` |
-| `DEEPSEEK_API_KEY` | DeepSeek API Key | `sk-...` |
-| `POSTGRES_USER_PASSWORD` | (可选) User DB 密码 | `MySecretPass` |
-| `POSTGRES_MARKET_PASSWORD` | (可选) Market DB 密码 | `MySecretPass` |
+| `CRYPTOPANIC_API_KEY` | CryptoPanic API Key | `7371d720fb1a8bd56b84a06ecef86e90da462110` |
+| `NEWS_API_KEY` | NewsAPI Key | (需自行申请，或留空) |
+| `OPENAI_API_KEY` | OpenAI API Key | (需填入您的 sk-...) |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key | (需填入您的 sk-...) |
+| `POSTGRES_USER_PASSWORD` | (可选) User DB 密码 | `user_password` |
+| `POSTGRES_MARKET_PASSWORD` | (可选) Market DB 密码 | `market_password` |
 
 > **如何获取 SSH Private Key?**
 > 在你本地机器上生成一对新的密钥（专门用于 CI/CD）：

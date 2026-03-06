@@ -63,3 +63,4 @@ docker/chroma_data/
 
 # Test Outputs
 tests/mcp/output/
+DEPLOY_GUIDE.md
