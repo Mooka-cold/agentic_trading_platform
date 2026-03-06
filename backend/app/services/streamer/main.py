@@ -231,37 +231,28 @@ class MarketStreamer:
     async def run(self):
         await self.warmup()
         
-        # OKX Public WebSocket URL
-        # Note: "business" channel might be for specific data. 
-        # Standard public data is usually at wss://ws.okx.com:8443/ws/v5/public
-        uri = "wss://ws.okx.com:8443/ws/v5/public" 
+        # Fallback: Use REST API polling if WebSocket fails
+        # OKX REST Endpoint
+        import httpx
+        
+        logger.info(f"� Starting Market Streamer for {EXCHANGE_SYMBOL}...")
         
         while True:
             try:
-                async with websockets.connect(uri) as websocket:
-                    logger.info(f"🔌 Connected to OKX Stream: {EXCHANGE_SYMBOL}")
+                # Polling Interval (3s)
+                async with httpx.AsyncClient() as client:
+                    # Get latest candle (limit=1)
+                    # OKX API: GET /api/v5/market/candles
+                    url = f"https://www.okx.com/api/v5/market/candles?instId={EXCHANGE_SYMBOL}&bar=1m&limit=1"
                     
-                    # Subscribe
-                    # OKX args format: channel: candle1m, instId: BTC-USDT-SWAP
-                    sub_msg = {
-                        "op": "subscribe",
-                        "args": [{"channel": "candle1m", "instId": EXCHANGE_SYMBOL}]
-                    }
-                    await websocket.send(json.dumps(sub_msg))
-                    
-                    while True:
-                        msg = await websocket.recv()
-                        # logger.debug(f"Received: {msg[:100]}...") # Debug log
-                        data = json.loads(msg)
+                    try:
+                        resp = await client.get(url, timeout=5)
+                        data = resp.json()
                         
-                        # Handle Pong or Login responses if needed (OKX doesn't need login for public)
-                        
-                        if "data" in data:
-                            # OKX Candle Data Format:
-                            # [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
+                        if data.get("code") == "0" and data.get("data"):
                             c = data['data'][0]
+                            # [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
                             
-                            # Parse data
                             candle_map = {
                                 'ts': c[0], 
                                 'o': c[1], 
@@ -269,30 +260,31 @@ class MarketStreamer:
                                 'l': c[3], 
                                 'c': c[4], 
                                 'vol': c[5],
-                                'confirm': c[8] # "0" for open, "1" for closed
+                                'confirm': c[8] 
                             }
                             
-                            # 1. Calculate Indicators (Append/Update Buffer)
+                            # 1. Calculate
                             indicators = self.calculate_indicators(candle_map)
                             
-                            # 2. Push to Redis (Realtime - for Agent decision)
+                            # 2. Redis
                             await self.save_to_redis(indicators)
                             
-                            # 3. Save to DB Strategy:
-                            # - Save CONFIRMED candles (historical integrity)
-                            # - ALSO update UNCONFIRMED candles (realtime charts)
-                            # Why? Because API reads from DB. If we don't save unconfirmed, 
-                            # the frontend chart will be stale by up to 59 seconds.
-                            # We can use "upsert" logic.
-                            
+                            # 3. DB (Upsert latest)
                             await self.save_to_db(candle_map, indicators)
                             
                             if candle_map['confirm'] == "1":
-                                logger.info(f"💾 Candle Closed & Saved: {pd.to_datetime(int(candle_map['ts']), unit='ms')}")
-
+                                logger.info(f"💾 Candle Closed: {pd.to_datetime(int(candle_map['ts']), unit='ms')}")
+                            else:
+                                # logger.debug(f"Tick: {candle_map['c']}")
+                                pass
                                 
+                    except Exception as req_err:
+                        logger.error(f"Request failed: {req_err}")
+                
+                await asyncio.sleep(3) # Poll every 3 seconds
+                
             except Exception as e:
-                logger.error(f"Stream error: {e}. Reconnecting in 5s...")
+                logger.error(f"Stream error: {e}. Retry in 5s...")
                 await asyncio.sleep(5)
 
 if __name__ == "__main__":
