@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     REDIS_URL: str
     
     # Vector DB
-    CHROMA_URL: str
+    CHROMA_URL: str = "http://chromadb:8000" # Default or Optional
 
     # LLM
     OPENAI_API_KEY: str = ""
