@@ -41,6 +41,8 @@ jobs:
           context: ./backend
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       # --- Build & Push AI Engine ---
       - name: Build and push AI Engine image
@@ -49,6 +51,8 @@ jobs:
           context: ./ai_engine
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-engine:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       # --- Build & Push Frontend (Optional for Hybrid, but good for backup) ---
       # For Hybrid mode, you run frontend locally, so we can skip pushing frontend image 
@@ -60,6 +64,8 @@ jobs:
           context: ./frontend
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     needs: build-and-push
