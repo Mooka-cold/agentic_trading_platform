@@ -27,9 +27,18 @@ async def execute_trade(trade: TradeAction, db: Session = Depends(get_user_db)):
     
     try:
         # Normalize Action
-        side = trade.action.upper()
-        if side not in ['BUY', 'SELL']:
-            raise HTTPException(status_code=400, detail="Invalid action. Use BUY or SELL.")
+        action_map = {
+            "LONG": "BUY",
+            "SHORT": "SELL",
+            "BUY": "BUY",
+            "SELL": "SELL"
+        }
+        raw_action = trade.action.upper()
+        
+        if raw_action not in action_map:
+            raise HTTPException(status_code=400, detail="Invalid action. Use BUY, SELL, LONG, or SHORT.")
+            
+        side = action_map[raw_action]
 
         result = service.execute_order(
             symbol=trade.symbol,
