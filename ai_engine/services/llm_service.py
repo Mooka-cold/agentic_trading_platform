@@ -14,9 +14,22 @@ class Signal(BaseModel):
 
 class LLMService:
     def __init__(self):
+        # Try to load API Key from DB first
+        openai_api_key = settings.OPENAI_API_KEY
+        try:
+            user_engine = create_engine(settings.DATABASE_USER_URL)
+            with user_engine.connect() as conn:
+                result = conn.execute(text("SELECT value FROM system_configs WHERE key = 'OPENAI_API_KEY'"))
+                row = result.fetchone()
+                if row and row[0]:
+                    openai_api_key = row[0]
+                    print("✅ Loaded OPENAI_API_KEY from System Config DB")
+        except Exception as e:
+            print(f"⚠️ Failed to load config from DB, falling back to ENV: {e}")
+
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL,
-            openai_api_key=settings.OPENAI_API_KEY,
+            openai_api_key=openai_api_key,
             openai_api_base=settings.OPENAI_API_BASE,
             temperature=0.2 # Low temperature for analytical tasks
         )

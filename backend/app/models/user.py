@@ -4,8 +4,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 import uuid
 from datetime import datetime
-
-Base = declarative_base()
+from app.db.base import Base # Use shared Base
 
 class User(Base):
     __tablename__ = "users"

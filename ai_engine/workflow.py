@@ -17,11 +17,6 @@ from services.risk_checks import get_missing_proposal_fields
 
 class WorkflowEngine:
     def __init__(self):
-        self.analyst = Analyst()
-        self.sentiment_agent = SentimentAgent()
-        self.strategist = Strategist()
-        self.reviewer = Reviewer()
-        self.reflector = Reflector()
         self.redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
         self.backend_url = settings.BACKEND_URL
         
@@ -31,6 +26,19 @@ class WorkflowEngine:
         self.current_task = None
         self.latest_config = {}
         self.processing_lock = asyncio.Lock()
+        
+        self.reload_agents()
+
+    def reload_agents(self):
+        print("🔄 Reloading Agents with latest config...")
+        from agents.core import Analyst, Strategist, Reviewer, Reflector, SentimentAgent
+        
+        self.analyst = Analyst()
+        self.sentiment_agent = SentimentAgent()
+        self.strategist = Strategist()
+        self.reviewer = Reviewer()
+        self.reflector = Reflector()
+        print("✅ Agents reloaded.")
 
     async def start_loop(self, symbol: str, session_id: str):
         """

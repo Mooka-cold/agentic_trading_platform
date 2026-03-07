@@ -7,9 +7,13 @@ from alembic import context
 
 # Import your models here
 from app.core.config import settings
-from app.models.user import Base
+from app.db.base import Base
+from app.models.user import User, Strategy, Order
 from app.models.news import News
-from app.models.signal import Signal # Ensure Alembic sees this
+from app.models.signal import Signal 
+from app.models.system import SystemConfig
+from app.models.workflow import WorkflowSession, AgentLog, WorkflowStatus
+# Ensure all models are imported so Base.metadata knows about them
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -72,6 +72,15 @@ async def analyze_market(req: AnalysisRequest):
     result = await llm_service.analyze(req.symbol)
     return result
 
+@app.post("/workflow/reload")
+async def reload_config():
+    """Reload agents with latest configuration from DB"""
+    try:
+        workflow_engine.reload_agents()
+        return {"status": "reloaded"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/workflow/run")
 async def run_workflow_endpoint(req: AnalysisRequest):
     """
