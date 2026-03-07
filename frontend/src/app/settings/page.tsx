@@ -123,7 +123,13 @@ const AgentSettings = () => {
         <option value="gpt-4-turbo">GPT-4 Turbo</option>
         <option value="gpt-4o">GPT-4o</option>
         <option value="claude-3-opus">Claude 3 Opus</option>
+        <option disabled>--- Qwen (Aliyun) ---</option>
+        <option value="qwen-plus">Qwen Plus</option>
+        <option value="qwen-turbo">Qwen Turbo</option>
+        <option value="qwen-long">Qwen Long</option>
+        <option disabled>--- DeepSeek ---</option>
         <option value="deepseek-chat">DeepSeek Chat</option>
+        <option value="deepseek-reasoner">DeepSeek Reasoner</option>
       </select>
     </div>
 
@@ -259,6 +265,7 @@ const ScheduleSettings = () => {
 const NewsSettings = () => {
   const [newsKey, setNewsKey] = useState("");
   const [twitterKey, setTwitterKey] = useState("");
+  const [cryptoPanicToken, setCryptoPanicToken] = useState("");
   const [loading, setLoading] = useState(false);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -270,8 +277,10 @@ const NewsSettings = () => {
                 const configs = await res.json();
                 const n = configs.find((c: any) => c.key === "NEWS_API_KEY");
                 const t = configs.find((c: any) => c.key === "TWITTER_API_KEY");
+                const c = configs.find((c: any) => c.key === "CRYPTOPANIC_API_KEY");
                 if (n) setNewsKey(n.value);
                 if (t) setTwitterKey(t.value);
+                if (c) setCryptoPanicToken(c.value);
             }
         } catch (e) { console.error(e); }
     };
@@ -289,6 +298,10 @@ const NewsSettings = () => {
             fetch(`${API_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "TWITTER_API_KEY", value: twitterKey, description: "Twitter/X API Key" })
+            }),
+            fetch(`${API_URL}/api/v1/system/config`, {
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ key: "CRYPTOPANIC_API_KEY", value: cryptoPanicToken, description: "CryptoPanic API Token" })
             })
         ];
         await Promise.all(tasks);
@@ -300,6 +313,16 @@ const NewsSettings = () => {
 
   return (
   <div className="space-y-4">
+    <div className="space-y-2">
+      <label className="font-bold text-gray-300 text-sm">CryptoPanic API Token</label>
+      <input 
+        type="password" 
+        value={cryptoPanicToken}
+        onChange={(e) => setCryptoPanicToken(e.target.value)}
+        className="w-full bg-[#020617] border border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none text-gray-300 font-mono text-sm"
+        placeholder="Auth Token" 
+      />
+    </div>
     <div className="space-y-2">
       <label className="font-bold text-gray-300 text-sm">NewsAPI Key</label>
       <input 
@@ -329,7 +352,7 @@ const NewsSettings = () => {
 
 const ApiSettings = () => {
   const [openaiKey, setOpenaiKey] = useState("");
-  const [cryptoPanicToken, setCryptoPanicToken] = useState("");
+  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
   const [loading, setLoading] = useState(false);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -340,13 +363,11 @@ const ApiSettings = () => {
             if (res.ok) {
                 const configs = await res.json();
                 const openaiConfig = configs.find((c: any) => c.key === "OPENAI_API_KEY");
-                const panicConfig = configs.find((c: any) => c.key === "CRYPTOPANIC_API_KEY");
-                if (openaiConfig) setOpenaiKey(openaiConfig.value); // Warning: Plain text
-                if (panicConfig) setCryptoPanicToken(panicConfig.value);
+                const baseConfig = configs.find((c: any) => c.key === "OPENAI_API_BASE");
+                if (openaiConfig) setOpenaiKey(openaiConfig.value);
+                if (baseConfig) setBaseUrl(baseConfig.value);
             }
-        } catch (e) {
-            console.error("Failed to load configs", e);
-        }
+        } catch (e) { console.error(e); }
     };
     fetchConfigs();
   }, []);
@@ -357,16 +378,14 @@ const ApiSettings = () => {
         const tasks = [];
         if (openaiKey) {
             tasks.push(fetch(`${API_URL}/api/v1/system/config`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
+                method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "OPENAI_API_KEY", value: openaiKey, description: "OpenAI API Key" })
             }));
         }
-        if (cryptoPanicToken) {
+        if (baseUrl) {
             tasks.push(fetch(`${API_URL}/api/v1/system/config`, {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ key: "CRYPTOPANIC_API_KEY", value: cryptoPanicToken, description: "CryptoPanic API Token" })
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ key: "OPENAI_API_BASE", value: baseUrl, description: "OpenAI Compatible Base URL" })
             }));
         }
         await Promise.all(tasks);
@@ -382,23 +401,25 @@ const ApiSettings = () => {
   return (
   <div className="space-y-6">
     <div className="space-y-2">
-      <label className="font-bold text-gray-300 text-sm">OpenAI API Key</label>
+      <label className="font-bold text-gray-300 text-sm">OpenAI Compatible Base URL</label>
+      <input 
+        type="text" 
+        value={baseUrl}
+        onChange={(e) => setBaseUrl(e.target.value)}
+        className="w-full bg-[#020617] border border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none text-gray-300 font-mono text-sm"
+        placeholder="https://api.openai.com/v1" 
+      />
+      <p className="text-xs text-gray-500">For Qwen/DeepSeek, use their API endpoint (e.g. https://dashscope.aliyuncs.com/compatible-mode/v1)</p>
+    </div>
+
+    <div className="space-y-2">
+      <label className="font-bold text-gray-300 text-sm">API Key</label>
       <input 
         type="password" 
         value={openaiKey}
         onChange={(e) => setOpenaiKey(e.target.value)}
         className="w-full bg-[#020617] border border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none text-gray-300 font-mono text-sm"
         placeholder="sk-..." 
-      />
-    </div>
-    <div className="space-y-2">
-      <label className="font-bold text-gray-300 text-sm">CryptoPanic API Token</label>
-      <input 
-        type="password" 
-        value={cryptoPanicToken}
-        onChange={(e) => setCryptoPanicToken(e.target.value)}
-        className="w-full bg-[#020617] border border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none text-gray-300 font-mono text-sm"
-        placeholder="Auth Token" 
       />
     </div>
     <div className="pt-4">

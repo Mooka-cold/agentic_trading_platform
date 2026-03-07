@@ -14,24 +14,38 @@ class Signal(BaseModel):
 
 class LLMService:
     def __init__(self):
-        # Try to load API Key from DB first
+        # Default from ENV
         openai_api_key = settings.OPENAI_API_KEY
+        openai_api_base = settings.OPENAI_API_BASE
+        llm_model = settings.LLM_MODEL
+
+        # Try to load from DB
         try:
             user_engine = create_engine(settings.DATABASE_USER_URL)
             with user_engine.connect() as conn:
-                result = conn.execute(text("SELECT value FROM system_configs WHERE key = 'OPENAI_API_KEY'"))
-                row = result.fetchone()
-                if row and row[0]:
-                    openai_api_key = row[0]
+                result = conn.execute(text("SELECT key, value FROM system_configs"))
+                configs = {row[0]: row[1] for row in result.fetchall()}
+                
+                if "OPENAI_API_KEY" in configs: 
+                    openai_api_key = configs["OPENAI_API_KEY"]
                     print("✅ Loaded OPENAI_API_KEY from System Config DB")
+                
+                if "OPENAI_API_BASE" in configs:
+                    openai_api_base = configs["OPENAI_API_BASE"]
+                    print(f"✅ Loaded OPENAI_API_BASE from System Config DB: {openai_api_base}")
+                
+                if "LLM_MODEL" in configs:
+                    llm_model = configs["LLM_MODEL"]
+                    print(f"✅ Loaded LLM_MODEL from System Config DB: {llm_model}")
+
         except Exception as e:
             print(f"⚠️ Failed to load config from DB, falling back to ENV: {e}")
 
         self.llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
+            model=llm_model,
             openai_api_key=openai_api_key,
-            openai_api_base=settings.OPENAI_API_BASE,
-            temperature=0.2 # Low temperature for analytical tasks
+            openai_api_base=openai_api_base,
+            temperature=0.2 
         )
         self.engine = create_engine(settings.DATABASE_MARKET_URL)
         self.parser = JsonOutputParser(pydantic_object=Signal)
