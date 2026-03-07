@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks
-from app.services.crawler.scheduler import (
+from app.services.crawler.tasks import (
     job_sync_1m, 
     job_sync_1h, 
     job_sync_1d, 

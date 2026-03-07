@@ -92,10 +92,10 @@ services:
       - ai_trading_net
 
   scheduler:
-    image: ${IMAGE_PREFIX}/backend:latest
+    image: ${IMAGE_PREFIX}/scheduler:latest
     container_name: ai_trading-scheduler
     restart: always
-    command: python -m app.services.crawler.scheduler
+    command: python main.py
     environment:
       - BACKEND_URL=http://backend:8000
       - AI_ENGINE_URL=http://ai-engine:8000
