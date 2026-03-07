@@ -100,11 +100,9 @@ services:
 
   scheduler:
     build:
-      context: ./backend
+      context: ./scheduler
       dockerfile: Dockerfile
-    command: python -m app.services.crawler.scheduler
-    volumes:
-      - ./backend:/app
+    command: python main.py
     environment:
       - BACKEND_URL=http://backend:8000
       - AI_ENGINE_URL=http://ai-engine:8000
