@@ -12,6 +12,7 @@ news_crawler = NewsCrawler()
 
 from app.models.user import Strategy
 from app.core.config import settings
+import httpx
 
 # Initialize with default, but will update from DB
 SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
@@ -47,7 +48,24 @@ async def job_sync_news():
     print("📰 [Scheduler] Triggering News sync...")
     await news_crawler.sync_news()
 
+async def job_periodic_review():
+    print("🧠 [Scheduler] Triggering Periodic Review (Reflector)...")
+    try:
+        async with httpx.AsyncClient() as client:
+            # Call AI Engine API
+            url = f"{settings.AI_ENGINE_URL}/workflow/review/periodic"
+            resp = await client.post(url, timeout=10.0)
+            if resp.status_code == 200:
+                print("✅ [Scheduler] Review Triggered Successfully")
+            else:
+                print(f"⚠️ [Scheduler] Review Trigger Failed: {resp.status_code} {resp.text}")
+    except Exception as e:
+        print(f"❌ [Scheduler] Review Connection Error: {e}")
+
 def start_scheduler():
+    # Run Periodic Review every 1 hour
+    scheduler.add_job(job_periodic_review, 'interval', hours=1)
+
     # Sync 1m candles every minute
     scheduler.add_job(job_sync_1m, 'interval', minutes=1)
     
