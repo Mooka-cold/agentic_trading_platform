@@ -197,48 +197,104 @@ class MarketDataService:
         
         for rule, label in resample_rules.items():
             # Resample OHLCV
-            df_resampled = raw_df.resample(rule).agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
-            }).dropna()
+            try:
+                # Use 'ME' 'h' 'min' aliases for newer pandas, but '1h' '5min' usually works
+                # Check raw_df index type
+                if not isinstance(raw_df.index, pd.DatetimeIndex):
+                    raw_df.index = pd.to_datetime(raw_df.index)
+                
+                df_resampled = raw_df.resample(rule).agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+            except Exception as e:
+                context[label] = f"Resample error: {e}"
+                continue
             
             if len(df_resampled) < 20:
-                context[label] = "Insufficient data for indicators"
+                context[label] = "Insufficient data (Need >20 candles)"
                 continue
                 
             # Calculate Indicators
-            df_resampled['SMA_20'] = df_resampled['close'].rolling(window=20).mean()
-            df_resampled['SMA_50'] = df_resampled['close'].rolling(window=50).mean()
+            # Use minimal windows if data is short
+            sma_fast_window = 20
+            sma_slow_window = 50
+            
+            if len(df_resampled) < sma_slow_window:
+                # Fallback for short history
+                sma_slow_window = len(df_resampled) // 2
+            
+            df_resampled['SMA_20'] = df_resampled['close'].rolling(window=sma_fast_window).mean()
+            df_resampled['SMA_50'] = df_resampled['close'].rolling(window=sma_slow_window).mean()
             df_resampled['EMA_20'] = df_resampled['close'].ewm(span=20, adjust=False).mean()
-            df_resampled['RSI'] = self.calculate_rsi(df_resampled['close'])
-            df_resampled['MACD'], df_resampled['Signal'], df_resampled['Hist'] = self.calculate_macd(df_resampled['close'])
-            df_resampled['ATR'] = self.calculate_atr(df_resampled)
+            
+            # RSI
+            try:
+                rsi_series = self.calculate_rsi(df_resampled['close'])
+                if rsi_series is not None and not rsi_series.empty:
+                    df_resampled['RSI'] = rsi_series
+                else:
+                     df_resampled['RSI'] = 50.0
+            except:
+                df_resampled['RSI'] = 50.0
+
+            # MACD
+            try:
+                m, s, h = self.calculate_macd(df_resampled['close'])
+                df_resampled['MACD'], df_resampled['Signal'], df_resampled['Hist'] = m, s, h
+            except:
+                 df_resampled['MACD'], df_resampled['Signal'], df_resampled['Hist'] = 0, 0, 0
+
+            # ATR
+            try:
+                df_resampled['ATR'] = self.calculate_atr(df_resampled)
+            except:
+                df_resampled['ATR'] = 0.0
             
             # Bollinger Bands
             bb_window = 20
-            bb_std = df_resampled['close'].rolling(window=bb_window).std()
-            df_resampled['BB_Upper'] = df_resampled['SMA_20'] + (bb_std * 2)
-            df_resampled['BB_Lower'] = df_resampled['SMA_20'] - (bb_std * 2)
+            if len(df_resampled) >= bb_window:
+                bb_std = df_resampled['close'].rolling(window=bb_window).std()
+                df_resampled['BB_Upper'] = df_resampled['SMA_20'] + (bb_std * 2)
+                df_resampled['BB_Lower'] = df_resampled['SMA_20'] - (bb_std * 2)
+            else:
+                 df_resampled['BB_Upper'] = df_resampled['close']
+                 df_resampled['BB_Lower'] = df_resampled['close']
 
             # Summary
+            if df_resampled.empty:
+                 context[label] = "No data after calc"
+                 continue
+
             last = df_resampled.iloc[-1]
+            
+            # Safe Access Helper
+            def get_val(series, default=0.0):
+                val = series
+                if pd.isna(val): return default
+                return val
+
             trend = "NEUTRAL"
-            if last['close'] > last['SMA_20'] > last['SMA_50']:
+            close = get_val(last['close'])
+            sma20 = get_val(last.get('SMA_20', 0))
+            sma50 = get_val(last.get('SMA_50', 0))
+            
+            if close > sma20 > sma50:
                 trend = "BULLISH"
-            elif last['close'] < last['SMA_20'] < last['SMA_50']:
+            elif close < sma20 < sma50:
                 trend = "BEARISH"
                 
             summary = (
                 f"Trend: {trend}\n"
-                f"Price: {last['close']:.2f}\n"
-                f"RSI(14): {last['RSI']:.1f}\n"
-                f"MACD: {last['MACD']:.2f} (Hist: {last['Hist']:.2f})\n"
-                f"BB: {last['BB_Upper']:.2f} / {last['BB_Lower']:.2f}\n"
-                f"ATR: {last['ATR']:.2f}\n"
-                f"SMA20: {last['SMA_20']:.2f}, EMA20: {last['EMA_20']:.2f}"
+                f"Price: {close:.2f}\n"
+                f"RSI(14): {get_val(last.get('RSI', 50)):.1f}\n"
+                f"MACD: {get_val(last.get('MACD', 0)):.2f} (Hist: {get_val(last.get('Hist', 0)):.2f})\n"
+                f"BB: {get_val(last.get('BB_Upper', 0)):.2f} / {get_val(last.get('BB_Lower', 0)):.2f}\n"
+                f"ATR: {get_val(last.get('ATR', 0)):.2f}\n"
+                f"SMA20: {sma20:.2f}, EMA20: {get_val(last.get('EMA_20', 0)):.2f}"
             )
             context[label] = summary
             
