@@ -1,9 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const AI_ENGINE_URL = 'http://ai-engine:8000';
+// Priority: Env Var > Default Docker Internal URL
+// In Hybrid Mode (Local Frontend), this should be set to http://<REMOTE_IP>:3202
+const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://ai-engine:8000';
 
-async function proxy(req: NextRequest, { params }: { params: { path: string[] } }) {
+export async function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return proxy(req, params);
+}
+
+export async function POST(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return proxy(req, params);
+}
+
+export async function PUT(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return proxy(req, params);
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: { path: string[] } }) {
+  return proxy(req, params);
+}
+
+async function proxy(req: NextRequest, params: { path: string[] }) {
   const path = params.path.join('/');
+  // Get search params from the request URL
   const searchParams = req.nextUrl.searchParams.toString();
   const url = `${AI_ENGINE_URL}/${path}${searchParams ? `?${searchParams}` : ''}`;
   
@@ -63,8 +82,3 @@ async function proxy(req: NextRequest, { params }: { params: { path: string[] } 
     );
   }
 }
-
-export const GET = proxy;
-export const POST = proxy;
-export const PUT = proxy;
-export const DELETE = proxy;
