@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     REVIEW_INTERVALS: list[int] = [1, 6, 24] # Configurable intervals for T+X reviews
 
     # Workflow Config
-    WORKFLOW_LOOP_INTERVAL: int = 900 # 15 minutes
+    WORKFLOW_LOOP_INTERVAL: int = 540 # 9 minutes
     LLM_TIMEOUT_SECONDS: int = 60
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
