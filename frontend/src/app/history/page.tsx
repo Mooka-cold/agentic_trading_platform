@@ -12,7 +12,9 @@ import {
   Activity,
   Cpu,
   ArrowRight,
-  Download
+  Download,
+  Trash2,
+  Trash
 } from "lucide-react";
 
 interface WorkflowSession {
@@ -78,6 +80,33 @@ export default function HistoryPage() {
     link.download = `${safeSymbol}_${selectedSessionId.slice(0, 8)}.json`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm("Delete this session?")) return;
+    
+    try {
+      const res = await fetch(`${API_URL}/api/v1/workflow/session/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== id));
+        if (selectedSessionId === id) setSelectedSessionId(null);
+      }
+    } catch (err) {
+      console.error("Delete failed", err);
+    }
+  };
+
+  const handleCleanupFailed = async () => {
+    if (!confirm("Delete all FAILED sessions? This cannot be undone.")) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/workflow/sessions/cleanup`, { method: "DELETE" });
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.status !== "FAILED"));
+      }
+    } catch (err) {
+      console.error("Cleanup failed", err);
+    }
   };
 
   // Fetch Sessions
@@ -159,8 +188,15 @@ export default function HistoryPage() {
         <div className="flex flex-1 overflow-hidden">
           {/* Session List (Left) */}
           <div className="w-80 border-r border-slate-800 bg-slate-900 overflow-y-auto">
-            <div className="p-4 border-b border-slate-800 font-bold text-sm text-slate-400 uppercase tracking-wider">
-              Recent Sessions
+            <div className="p-4 border-b border-slate-800 font-bold text-sm text-slate-400 uppercase tracking-wider flex justify-between items-center">
+              <span>Recent Sessions</span>
+              <button 
+                onClick={handleCleanupFailed}
+                title="Clean all FAILED sessions"
+                className="p-1 hover:text-red-400 text-slate-600 transition-colors"
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
             <div className="p-3 border-b border-slate-800 space-y-2">
               <input
@@ -221,13 +257,22 @@ export default function HistoryPage() {
               <div 
                 key={session.id}
                 onClick={() => setSelectedSessionId(session.id)}
-                className={`p-4 border-b border-slate-800 cursor-pointer hover:bg-slate-800 transition-colors ${selectedSessionId === session.id ? 'bg-slate-800 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'}`}
+                className={`p-4 border-b border-slate-800 cursor-pointer hover:bg-slate-800 transition-colors group ${selectedSessionId === session.id ? 'bg-slate-800 border-l-4 border-l-blue-500' : 'border-l-4 border-l-transparent'}`}
               >
                 <div className="flex justify-between items-center mb-1">
                   <span className="font-bold text-white">{session.symbol || "BTC/USDT"}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded ${session.status === 'COMPLETED' ? 'bg-green-900 text-green-300' : 'bg-blue-900 text-blue-300'}`}>
-                    {session.status}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-0.5 rounded ${session.status === 'COMPLETED' ? 'bg-green-900 text-green-300' : session.status === 'FAILED' ? 'bg-red-900 text-red-300' : 'bg-blue-900 text-blue-300'}`}>
+                        {session.status}
+                    </span>
+                    <button
+                        onClick={(e) => handleDeleteSession(e, session.id)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-opacity"
+                        title="Delete Session"
+                    >
+                        <Trash size={12} />
+                    </button>
+                  </div>
                 </div>
                 <div className="text-xs text-slate-500">
                   {formatDateTime(session.start_time)}
