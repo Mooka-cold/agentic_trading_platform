@@ -297,6 +297,34 @@ def get_workflow_history(
         
     return {"history": history}
 
+@router.delete("/session/{session_id:path}")
+def delete_session(session_id: str, db: Session = Depends(get_user_db)):
+    session = db.query(WorkflowSession).filter(WorkflowSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Cascade delete logs
+    db.query(AgentLog).filter(AgentLog.session_id == session.id).delete()
+    db.delete(session)
+    db.commit()
+    return {"status": "deleted"}
+
+@router.delete("/sessions/cleanup")
+def cleanup_failed_sessions(db: Session = Depends(get_user_db)):
+    """
+    Delete all sessions with status FAILED.
+    """
+    failed_sessions = db.query(WorkflowSession).filter(WorkflowSession.status == WorkflowStatus.FAILED).all()
+    count = 0
+    for s in failed_sessions:
+        # Delete logs first
+        db.query(AgentLog).filter(AgentLog.session_id == s.id).delete()
+        db.delete(s)
+        count += 1
+    
+    db.commit()
+    return {"status": "cleaned", "count": count}
+
 @router.get("/list")
 def list_workflow_sessions(limit: int = 20, db: Session = Depends(get_user_db)):
     """
