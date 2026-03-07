@@ -12,7 +12,8 @@ from core.prompt_loader import registry
 from langchain_core.output_parsers import JsonOutputParser
 
 # Configure Redis for SSE streaming
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# Use settings from core.config which handles .env loading
+REDIS_URL = settings.REDIS_URL
 
 class BaseAgent:
     def __init__(self, agent_id: str, name: str):

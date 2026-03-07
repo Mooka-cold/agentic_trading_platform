@@ -7,7 +7,7 @@ class MarketData(BaseModel):
     timeframe: str
     price: float
     volume: float
-    indicators: Dict[str, float] = {}  # RSI, MACD, etc.
+    indicators: Dict[str, Any] = {}  # RSI, MACD(dict), BB(dict), etc.
     news_sentiment: float = 0.0
 
 class AnalystOutput(BaseModel):
