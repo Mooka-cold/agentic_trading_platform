@@ -41,10 +41,6 @@ class MarketDataService:
         logger = logging.getLogger("ai_engine.market_data")
         
         # 1. Try to get latest pre-calculated indicators from DB (limit=1)
-        limit = 1
-        
-        # We need to explicitly select indicator columns, as _fetch_ohlcv only gets OHLCV
-        # Let's create a specialized query for this
         query = text("""
             SELECT 
                 time, close, volume,
@@ -62,12 +58,9 @@ class MarketDataService:
                 row = conn.execute(query, {"symbol": symbol}).fetchone()
                 
             if row:
-                # Check freshness (e.g. within last 2 minutes)
                 last_ts = row.time.timestamp()
                 now_ts = pd.Timestamp.now().timestamp()
                 
-                # If data is fresh enough (e.g. < 120s old), use DB values
-                # Note: Streamer updates every minute, so 2 mins is a safe buffer
                 if now_ts - last_ts < 120:
                     logger.info(f"✅ [MarketData] Using DB indicators for {symbol} (Freshness: {now_ts - last_ts:.1f}s)")
                     return {
@@ -75,8 +68,26 @@ class MarketDataService:
                         "volume": float(row.volume),
                         "indicators": {
                             "rsi": float(row.rsi_14) if row.rsi_14 is not None else 0.0,
-                            "macd": float(row.macd) if row.macd is not None else 0.0,
-                            # Add others if needed by agent, currently only RSI/MACD are core
+                            "macd": {
+                                "value": float(row.macd) if row.macd is not None else 0.0,
+                                "signal": float(row.macd_signal) if row.macd_signal is not None else 0.0,
+                                "hist": float(row.macd_hist) if row.macd_hist is not None else 0.0
+                            },
+                            "bb": {
+                                "upper": float(row.bb_upper) if row.bb_upper is not None else 0.0,
+                                "middle": float(row.bb_middle) if row.bb_middle is not None else 0.0,
+                                "lower": float(row.bb_lower) if row.bb_lower is not None else 0.0
+                            },
+                            "ema": {
+                                "fast": float(row.ema_7) if row.ema_7 is not None else 0.0,
+                                "slow": float(row.ema_25) if row.ema_25 is not None else 0.0
+                            },
+                            "sma": {
+                                "fast": float(row.sma_7) if row.sma_7 is not None else 0.0,
+                                "medium": float(row.sma_25) if row.sma_25 is not None else 0.0,
+                                "slow": float(row.ma50) if row.ma50 is not None else 0.0
+                            },
+                            "atr": float(row.atr_14) if row.atr_14 is not None else 0.0
                         },
                         "source": "database",
                         "timestamp": last_ts
@@ -103,7 +114,10 @@ class MarketDataService:
         # Calculate Indicators on 1m timeframe
         df['RSI'] = self.calculate_rsi(df['close'])
         macd, sig, hist = self.calculate_macd(df['close'])
-        df['MACD'] = macd
+        
+        # Simple EMAs/SMAs for fallback
+        df['EMA_7'] = df['close'].ewm(span=7, adjust=False).mean()
+        df['EMA_25'] = df['close'].ewm(span=25, adjust=False).mean()
         
         last = df.iloc[-1]
         
@@ -112,7 +126,15 @@ class MarketDataService:
             "volume": float(last['volume']),
             "indicators": {
                 "rsi": float(last['RSI']) if not pd.isna(last['RSI']) else 0.0,
-                "macd": float(last['MACD']) if not pd.isna(last['MACD']) else 0.0
+                "macd": {
+                    "value": float(macd.iloc[-1]) if not pd.isna(macd.iloc[-1]) else 0.0,
+                    "signal": float(sig.iloc[-1]) if not pd.isna(sig.iloc[-1]) else 0.0,
+                    "hist": float(hist.iloc[-1]) if not pd.isna(hist.iloc[-1]) else 0.0
+                },
+                "ema": {
+                    "fast": float(last['EMA_7']),
+                    "slow": float(last['EMA_25'])
+                }
             },
             "source": "calculated",
             "timestamp": last.name.timestamp() if hasattr(last.name, 'timestamp') else 0

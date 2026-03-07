@@ -111,43 +111,62 @@ class Analyst(BaseAgent):
         
         await self.think(f"Fetching realtime market data for {symbol}...", session_id)
         
-        # 1. Try Realtime Redis Data first
-        realtime_data = await self._get_realtime_data(symbol)
+        # 1. Fetch Comprehensive Market Snapshot (1m/5m Indicators)
+        snapshot = market_data_service.get_full_snapshot(symbol)
+        indicators = snapshot.get('indicators', {})
         
-        technical_text = ""
+        # Parse Technicals
+        price = snapshot.get('price', 0.0)
+        volume = snapshot.get('volume', 0.0)
+        rsi = indicators.get('rsi', 50.0)
         
-        if realtime_data:
-            # Use pre-calculated indicators
-            price = float(realtime_data.get('price', 0))
-            rsi = float(realtime_data.get('rsi_14', 0))
-            macd = float(realtime_data.get('macd', 0))
-            bb_upper = float(realtime_data.get('bb_upper', 0))
-            bb_lower = float(realtime_data.get('bb_lower', 0))
-            
-            technical_text = (
-                f"### Realtime Technicals (1m)\n"
-                f"- Price: {price}\n"
-                f"- RSI(14): {rsi:.2f}\n"
-                f"- MACD: {macd:.4f}\n"
-                f"- Bollinger: {bb_upper:.2f} / {bb_lower:.2f}\n"
-            )
-            await self.think(f"Using Realtime Stream Data (RSI={rsi:.2f})", session_id)
+        # MACD
+        macd_data = indicators.get('macd', {})
+        if isinstance(macd_data, dict):
+            macd_val = macd_data.get('value', 0.0)
+            macd_sig = macd_data.get('signal', 0.0)
+            macd_hist = macd_data.get('hist', 0.0)
         else:
-            # Fallback to historical fetch
-            await self.think("Realtime stream unavailable. Fetching historical data...", session_id, log_type="warning")
-            mtf_data = market_data_service.get_multi_timeframe_context(symbol)
-            if "error" in mtf_data:
-                 technical_text = f"Error fetching data: {mtf_data['error']}"
-            else:
-                 technical_text = (
-                     f"### 1H Trend (Macro)\n{mtf_data.get('1h (Trend)', 'N/A')}\n\n"
-                     f"### 15M Structure (Key Levels)\n{mtf_data.get('15m (Structure)', 'N/A')}\n\n"
-                     f"### 5M Entry (Micro)\n{mtf_data.get('5m (Entry)', 'N/A')}"
-                 )
+            macd_val = float(macd_data)
+            macd_sig, macd_hist = 0.0, 0.0
 
-        # Log Technical Data
+        # Bollinger Bands
+        bb_data = indicators.get('bb', {})
+        bb_upper = bb_data.get('upper', 0.0)
+        bb_lower = bb_data.get('lower', 0.0)
+        
+        # Volume Analysis (Simple MA)
+        # We need volume MA to detect breakouts. 
+        # Since snapshot might not have vol MA, we can infer from recent vol or just log raw vol.
+        # For now, raw volume is passed.
+        
+        # 2. Fetch Multi-Timeframe Context (Trend Alignment)
+        mtf_context = market_data_service.get_multi_timeframe_context(symbol)
+        mtf_text = ""
+        if "error" not in mtf_context:
+            mtf_text = (
+                f"### Multi-Timeframe Trend\n"
+                f"- 1H (Macro): {mtf_context.get('1h (Trend)', 'N/A')}\n"
+                f"- 15M (Structure): {mtf_context.get('15m (Structure)', 'N/A')}\n"
+                f"- 5M (Momentum): {mtf_context.get('5m (Entry)', 'N/A')}\n"
+            )
+        else:
+            mtf_text = "### Multi-Timeframe Trend\nData unavailable."
+
+        # Construct Technical Context for LLM
+        technical_text = (
+            f"### Realtime Technicals (1m)\n"
+            f"- Price: {price}\n"
+            f"- Volume: {volume}\n"
+            f"- RSI(14): {rsi:.2f}\n"
+            f"- MACD: Value={macd_val:.4f}, Signal={macd_sig:.4f}, Hist={macd_hist:.4f}\n"
+            f"- Bollinger: Upper={bb_upper:.2f}, Lower={bb_lower:.2f}\n"
+            f"- EMAs: Fast(7)={indicators.get('ema', {}).get('fast', 0.0):.2f}, Slow(25)={indicators.get('ema', {}).get('slow', 0.0):.2f}\n\n"
+            f"{mtf_text}"
+        )
+        
         await self.think(
-            f"Technical Context:\n{technical_text[:200]}...", 
+            f"Technical Analysis Data Ready (RSI={rsi:.2f}, MACD Hist={macd_hist:.4f})", 
             session_id, 
             artifact={"technical_data": technical_text}
         )
@@ -208,17 +227,35 @@ class Strategist(BaseAgent):
         # Prepare context for LLM
         # Use full Analyst Reasoning + Sentiment Report
         sentiment_context = "Neutral"
+        sentiment_score = 0.0
         if state.sentiment_report:
+            sentiment_score = state.sentiment_report.score
             sentiment_context = (
-                f"Score: {state.sentiment_report.score}\n"
+                f"Score: {sentiment_score:.2f}\n"
                 f"Summary: {state.sentiment_report.summary}\n"
                 f"Drivers: {', '.join(state.sentiment_report.key_drivers)}"
             )
 
+        # --- 1. Sentiment-Technical Integration (Weighted Mechanism) ---
+        sentiment_instruction = ""
+        if sentiment_score > 0.8:
+            sentiment_instruction = (
+                "\n[SENTIMENT OVERRIDE] EXTREME GREED DETECTED (>0.8). "
+                "Market is likely overextended. Treat 'Neutral' technicals as potential TOP signals. "
+                "Tighten stops on Longs. Look for Bearish Divergence."
+            )
+        elif sentiment_score < -0.8:
+            sentiment_instruction = (
+                "\n[SENTIMENT OVERRIDE] EXTREME FEAR DETECTED (<-0.8). "
+                "Market is likely oversold. Treat 'Neutral' technicals as potential BOTTOM signals. "
+                "Look for Bullish Reversal (RSI Divergence). Consider 'Buy the Dip' if support holds."
+            )
+        # -------------------------------------------------------------
+
         market_summary = (
             f"Price: {state.market_data.price}\n"
             f"Technical Context: {report.reasoning}\n"
-            f"Sentiment Context: {sentiment_context}\n"
+            f"Sentiment Context: {sentiment_context}{sentiment_instruction}\n"
             f"Risk Context: {report.key_risk}"
         )
         
