@@ -11,6 +11,11 @@ from services.sentiment import sentiment_service
 from services.risk_checks import compute_trade_metrics, get_missing_proposal_fields, build_fix_suggestions
 from core.config import settings
 
+# Lazy import for services to avoid circular deps or init issues
+# from services.market_data import market_data_service 
+# from services.memory import memory_service
+# from services.execution import execution_service
+
 class SentimentAgent(BaseAgent):
     def __init__(self):
         super().__init__("sentiment", "The Sentiment Analyst")
@@ -27,6 +32,7 @@ class SentimentAgent(BaseAgent):
         pass
 
     async def run(self, state: AgentState) -> dict:
+        from services.market_data import market_data_service
         session_id = state.session_id
         symbol = state.market_data.symbol
         
@@ -106,6 +112,7 @@ class Analyst(BaseAgent):
             return {}
 
     async def run(self, state: AgentState) -> dict:
+        from services.memory import memory_service
         session_id = state.session_id
         symbol = state.market_data.symbol
         
@@ -214,6 +221,7 @@ class Strategist(BaseAgent):
         super().__init__("strategist", "The Strategist")
 
     async def run(self, state: AgentState) -> dict:
+        from services.execution import execution_service
         session_id = state.session_id
         symbol = state.market_data.symbol
         
