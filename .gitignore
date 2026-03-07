@@ -64,3 +64,6 @@ docker/chroma_data/
 # Test Outputs
 tests/mcp/output/
 DEPLOY_GUIDE.md
+ai_engine/chroma_db/chroma.sqlite3
+check_import.py
+backend/check_app.py

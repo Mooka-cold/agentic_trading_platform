@@ -147,8 +147,9 @@ jobs:
             docker compose -f docker-compose.prod.yml pull
             
             # 4. Restart services
-            # The .env file created above will be automatically read by docker compose
+            # Force remove old containers to avoid conflicts
+            docker compose -f docker-compose.prod.yml down --remove-orphans
             docker compose -f docker-compose.prod.yml up -d
             
             # 5. Clean up old images
-            docker image prune -f
+            docker image prune -f || true
