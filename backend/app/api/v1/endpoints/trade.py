@@ -31,12 +31,17 @@ async def execute_trade(trade: TradeAction, db: Session = Depends(get_user_db)):
             "LONG": "BUY",
             "SHORT": "SELL",
             "BUY": "BUY",
-            "SELL": "SELL"
+            "SELL": "SELL",
+            "COVER": "BUY", # Buy to Cover Short
+            "CLOSE": "SELL", # Default to Sell for Close (Assuming Long) - TODO: Check position side
+            "CLOSE_LONG": "SELL",
+            "CLOSE_SHORT": "BUY"
         }
         raw_action = trade.action.upper()
         
         if raw_action not in action_map:
-            raise HTTPException(status_code=400, detail="Invalid action. Use BUY, SELL, LONG, or SHORT.")
+            # Fallback or Error
+            raise HTTPException(status_code=400, detail=f"Invalid action: {raw_action}. Use BUY/SELL/LONG/SHORT/COVER.")
             
         side = action_map[raw_action]
 
