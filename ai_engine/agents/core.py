@@ -366,9 +366,12 @@ class Strategist(BaseAgent):
                     }
                 )
             else:
-                qty_str = f"{proposal.quantity:.4f}" if proposal.quantity else "N/A"
-                sl_str = f"{proposal.stop_loss:.2f}" if proposal.stop_loss else "N/A"
-                tp_str = f"{proposal.take_profit:.2f}" if proposal.take_profit else "N/A"
+                qty_str = f"{proposal.quantity:.4f}" if proposal.quantity is not None else "N/A"
+                sl_str = f"{proposal.stop_loss:.2f}" if proposal.stop_loss is not None else "N/A"
+                tp_str = f"{proposal.take_profit:.2f}" if proposal.take_profit is not None else "N/A"
+                entry_str = f"{proposal.entry_price:.2f}" if proposal.entry_price is not None else "N/A"
+                conf_str = f"{proposal.confidence:.2f}" if proposal.confidence is not None else "N/A"
+                
                 rr = "N/A"
                 if proposal.entry_price and proposal.stop_loss and proposal.take_profit:
                     risk = abs(proposal.entry_price - proposal.stop_loss)
@@ -379,7 +382,7 @@ class Strategist(BaseAgent):
                 reasoning_text = proposal.reasoning.replace(" || ", "\n")
                 prefix = f"[Rev. {state.strategy_revision_round}] " if state.strategy_revision_round > 0 else ""
                 await self.say(
-                    f"{prefix}DECISION: {proposal.action}\nPLAN: Entry {proposal.entry_price:.2f} | SL {sl_str} | TP {tp_str} | Qty {qty_str} | R/R {rr} | Confidence {proposal.confidence:.2f}\n{reasoning_text}",
+                    f"{prefix}DECISION: {proposal.action}\nPLAN: Entry {entry_str} | SL {sl_str} | TP {tp_str} | Qty {qty_str} | R/R {rr} | Confidence {conf_str}\n{reasoning_text}",
                     session_id,
                     artifact={
                         "action": proposal.action,
