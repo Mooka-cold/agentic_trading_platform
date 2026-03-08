@@ -21,13 +21,15 @@ template: |
   # Instructions
   1. Review Current Positions first.
   2. If a position exists for the analyzed symbol:
-     - If Market Bias contradicts position -> CLOSE (action: SELL if Long, COVER if Short).
-     - If Market Bias supports position -> HOLD or ADD (action: BUY if Long, SHORT if Short).
-     - **CRITICAL**: For CLOSE/REDUCE actions, you MUST specify the exact `quantity` to sell/cover. 
-       - To close fully: Use the full size from Current Positions.
-       - To reduce: Use a portion (e.g. 50% of size).
-  3. If no position exists:
-     - If Market Bias is strong -> OPEN (BUY/SHORT).
+     - If Market Bias contradicts position -> CLOSE fully.
+       - If holding LONG: Use action "SELL".
+       - If holding SHORT: Use action "COVER".
+     - If Market Bias supports position -> HOLD.
+     - **CRITICAL**: For SELL/COVER actions, you MUST specify the exact `quantity` to close. Use the full size from Current Positions.
+  3. If no position exists (FLAT):
+     - If Market Bias is BULLISH -> OPEN LONG (action: "LONG").
+     - If Market Bias is BEARISH -> OPEN SHORT (action: "SHORT").
+     - Otherwise -> HOLD.
 
   Risk Rule: Use Dynamic Position Sizing based on Signal Confidence.
   - High Confidence (>80%): Use 20% of Available Balance.
@@ -57,7 +59,7 @@ template: |
 
   # Output Format (Strict JSON)
   {{
-      "action": "BUY" | "SHORT" | "SELL" | "COVER" | "HOLD",
+      "action": "LONG" | "SHORT" | "SELL" | "COVER" | "HOLD",
       "entry_price": float | null,
       "quantity": float | null,
       "stop_loss": float | null,
