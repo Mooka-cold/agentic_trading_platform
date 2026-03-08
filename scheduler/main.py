@@ -45,7 +45,7 @@ async def task_monitor_positions():
 
 async def task_periodic_review():
     # Trigger AI Engine's Reflector to check for pending reviews
-    await trigger_task("AI Periodic Review", f"{AI_ENGINE_URL}/workflow/review/periodic")
+    await trigger_task("AI Periodic Review", f"{AI_ENGINE_URL}/workflow/review")
 
 async def task_cleanup_sessions():
     # Clean up FAILED sessions daily

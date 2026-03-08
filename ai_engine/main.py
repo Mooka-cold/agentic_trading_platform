@@ -72,6 +72,13 @@ async def analyze_market(req: AnalysisRequest):
     result = await llm_service.analyze(req.symbol)
     return result
 
+@app.post("/workflow/review")
+async def trigger_periodic_reviews(background_tasks: BackgroundTasks):
+    """Trigger periodic review process (T+1/6/24h)"""
+    # Run in background to avoid blocking
+    background_tasks.add_task(workflow_engine.reflector.run_periodic_reviews)
+    return {"status": "review_triggered"}
+
 @app.post("/workflow/reload")
 async def reload_config():
     """Reload agents with latest configuration from DB"""

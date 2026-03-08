@@ -138,59 +138,43 @@ async def save_reflection(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from app.models.workflow import WorkflowSession, WorkflowStatus
+from datetime import datetime, timedelta
+
 @router.get("/reflection/pending")
-def get_pending_reflections(db: Session = Depends(get_user_db)):
+def get_pending_reviews(db: Session = Depends(get_user_db)):
     """
-    Get Workflow Sessions that need periodic review (T+1H, T+6H, etc.)
-    Based on session end_time and periodic_review_status.
+    Find sessions that need periodic review (T+1h, T+6h, T+24h).
     """
-    now = datetime.now(timezone.utc)
-    pending_tasks = []
+    now = datetime.utcnow()
+    tasks = []
     
-    # Define Review Windows (Hours)
-    # T+1H: 1h <= elapsed < 6h, status != T1_DONE
-    # T+6H: 6h <= elapsed < 24h, status != T6_DONE
-    # T+24H: elapsed >= 24h, status != COMPLETED
-    
-    # Fetch completed sessions that are not fully reviewed
-    # Optimize query: filter by status != COMPLETED
-    sessions = db.query(WorkflowSession).filter(
-        WorkflowSession.status == WorkflowStatus.COMPLETED,
-        WorkflowSession.periodic_review_status != "COMPLETED",
-        WorkflowSession.end_time.isnot(None)
+    # 1. Check T+1H (Sessions finished > 1h ago, status=PENDING)
+    t1_threshold = now - timedelta(hours=1)
+    sessions_t1 = db.query(WorkflowSession).filter(
+        WorkflowSession.end_time <= t1_threshold,
+        WorkflowSession.periodic_review_status == "PENDING",
+        WorkflowSession.status == WorkflowStatus.COMPLETED
     ).all()
-    
-    for session in sessions:
-        if not session.end_time: continue
-        
-        # Ensure timezone awareness
-        end_time = session.end_time
-        if end_time.tzinfo is None:
-            end_time = end_time.replace(tzinfo=timezone.utc)
-            
-        elapsed_hours = (now - end_time).total_seconds() / 3600
-        
-        task = None
-        current_status = session.periodic_review_status or "PENDING"
-        
-        if 1 <= elapsed_hours < 6:
-            if current_status == "PENDING":
-                task = "T_PLUS_1H"
-        elif 6 <= elapsed_hours < 24:
-            if current_status in ["PENDING", "T1_DONE"]:
-                 task = "T_PLUS_6H"
-        elif elapsed_hours >= 24:
-             if current_status != "COMPLETED":
-                 task = "T_PLUS_24H"
-                 
-        if task:
-            pending_tasks.append({
-                "session_id": session.id,
-                "symbol": session.symbol,
-                "stage": task,
-                "action": session.action,
-                "review_result": session.review_status,
-                "end_time": end_time.isoformat()
-            })
-            
-    return pending_tasks
+    for s in sessions_t1:
+        tasks.append({"session_id": s.id, "stage": "T_PLUS_1H", "symbol": s.symbol, "action": s.action})
+
+    # 2. Check T+6H (finished > 6h ago, status=T1_DONE)
+    t6_threshold = now - timedelta(hours=6)
+    sessions_t6 = db.query(WorkflowSession).filter(
+        WorkflowSession.end_time <= t6_threshold,
+        WorkflowSession.periodic_review_status == "T1_DONE"
+    ).all()
+    for s in sessions_t6:
+        tasks.append({"session_id": s.id, "stage": "T_PLUS_6H", "symbol": s.symbol, "action": s.action})
+
+    # 3. Check T+24H (finished > 24h ago, status=T6_DONE)
+    t24_threshold = now - timedelta(hours=24)
+    sessions_t24 = db.query(WorkflowSession).filter(
+        WorkflowSession.end_time <= t24_threshold,
+        WorkflowSession.periodic_review_status == "T6_DONE"
+    ).all()
+    for s in sessions_t24:
+        tasks.append({"session_id": s.id, "stage": "T_PLUS_24H", "symbol": s.symbol, "action": s.action})
+
+    return tasks
