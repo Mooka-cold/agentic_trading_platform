@@ -13,6 +13,8 @@ from core.config import settings
 from services.market_data import market_data_service
 from services.risk_checks import get_missing_proposal_fields
 
+from langgraph_workflow import create_trading_workflow
+
 # Workflow Engine (Orchestrator)
 
 class WorkflowEngine:
@@ -28,6 +30,8 @@ class WorkflowEngine:
         self.processing_lock = asyncio.Lock()
         
         self.reload_agents()
+        # Initialize LangGraph Workflow
+        self.graph_app = create_trading_workflow()
 
     def reload_agents(self):
         print("🔄 Reloading Agents with latest config...")
@@ -277,141 +281,62 @@ class WorkflowEngine:
                 )
                 # ---------------------------
 
-                # 2. Parallel Analysis (Analyst + Sentiment)
-                # Use asyncio.gather to run Analyst and Sentiment agents concurrently
-                await self.analyst.emit_log(
-                    content="Initializing parallel analysis agents...",
-                    log_type="info",
-                    session_id=session_id
-                )
-                
-                print("--- Analysis Phase ---", flush=True)
-                # Wrap tasks in a way that exceptions are caught and logged properly
-                analyst_task = self.analyst.run(state)
-                sentiment_task = self.sentiment_agent.run(state)
+            # --- 2. EXECUTE LANGGRAPH WORKFLOW ---
+            
+            # Prepare Inputs
+            graph_inputs = {
+                "agent_state": state,
+                "session_id": session_id,
+                "symbol": symbol,
+                "completed_analysis": 0
+            }
+            
+            config = {"configurable": {"thread_id": session_id}}
+            
+            print(f"--- Executing LangGraph Workflow for {session_id} ---", flush=True)
+            
+            final_state = None
+            try:
+                # Run the graph
+                async for event in self.graph_app.astream(graph_inputs, config):
+                    for node_name, output in event.items():
+                        print(f"[Graph] Finished Node: {node_name}", flush=True)
+                        # We can emit logs here if needed, but Agents already do it.
+                        if "agent_state" in output:
+                            final_state = output["agent_state"]
+            except Exception as e:
+                print(f"LangGraph Execution Failed: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                # Fallback to failing the session
+                raise e
 
-                # Execute in parallel with return_exceptions=True to avoid one failure killing the other
-                results = await asyncio.gather(analyst_task, sentiment_task, return_exceptions=True)
+            if final_state:
+                state = final_state
                 
-                for i, res in enumerate(results):
-                    agent_name = "Analyst" if i == 0 else "Sentiment"
-                    if isinstance(res, dict):
-                        for k, v in res.items():
-                            setattr(state, k, v)
-                    elif isinstance(res, Exception):
-                        print(f"[Workflow] {agent_name} Error: {res}", flush=True)
-                        import traceback
-                        traceback.print_exc()
-                        await self.analyst.emit_log(
-                            content=f"{agent_name} failed: {str(res)}",
-                            log_type="error",
-                            session_id=session_id
-                        )
+            print("Workflow Completed.", flush=True)
+            
+            # Update Session Status to COMPLETED with Decision Info
+            try:
+                update_payload = {"status": "COMPLETED"}
+                
+                if state.strategy_proposal:
+                    update_payload["action"] = state.strategy_proposal.action
+                    if state.strategy_proposal.action == "HOLD":
+                        update_payload["review_status"] = "SKIPPED"
+                
+                if state.risk_verdict:
+                    update_payload["review_status"] = "APPROVED" if state.risk_verdict.approved else "REJECTED"
 
-                # Check using correct attribute name 'analyst_report' matching AgentState definition
-                if not getattr(state, "analyst_report", None):
-                    await self.analyst.emit_log(
-                        content="Analyst failed to produce report.",
-                        log_type="error",
-                        session_id=session_id
+                async with httpx.AsyncClient() as client:
+                    await client.patch(
+                        f"{self.backend_url}/api/v1/workflow/session/{session_id}",
+                        json=update_payload
                     )
-                    return None
+            except Exception as e:
+                print(f"Warning: Failed to update session status: {e}", flush=True)
 
-                print("--- Strategist/Reviewer Negotiation ---", flush=True)
-                max_revision_rounds = 2
-                state.review_feedback = None
-                state.strategy_revision_round = 0
-                while True:
-                    updates = await self.strategist.run(state)
-                    for k, v in updates.items():
-                        setattr(state, k, v)
-                    missing_fields = get_missing_proposal_fields(state.strategy_proposal)
-                    if missing_fields:
-                        if state.strategy_revision_round >= max_revision_rounds:
-                            state.risk_verdict = RiskVerdict(
-                                approved=False,
-                                risk_score=92.0,
-                                message=f"Missing required proposal fields after revisions: {', '.join(missing_fields)}",
-                                reject_code="MISSING_FIELDS",
-                                fix_suggestions={"required_fields": missing_fields},
-                                checks={"contract": "FAIL"}
-                            )
-                            await self.reviewer.say(
-                                f"REJECTED [MISSING_FIELDS]. {state.risk_verdict.message}",
-                                session_id,
-                                artifact={
-                                    "verdict": "REJECTED",
-                                    "code": "MISSING_FIELDS",
-                                    "fix_suggestions": state.risk_verdict.fix_suggestions
-                                }
-                            )
-                            break
-                        state.strategy_revision_round += 1
-                        state.review_feedback = {
-                            "reject_code": "MISSING_FIELDS",
-                            "message": "Strategist output schema incomplete.",
-                            "missing_fields": missing_fields,
-                            "required_contract": ["action", "entry_price", "quantity", "stop_loss", "take_profit", "reasoning", "confidence", "assumptions"]
-                        }
-                        continue
-                    updates = await self.reviewer.run(state)
-                    for k, v in updates.items():
-                        setattr(state, k, v)
-                    verdict = state.risk_verdict
-                    if not verdict or verdict.approved:
-                        state.review_feedback = None
-                        break
-                    if state.strategy_revision_round >= max_revision_rounds:
-                        break
-                    if verdict.reject_code not in ["MISSING_FIELDS", "SL_DISTANCE_EXCEED", "RR_TOO_LOW", "DIRECTION_INVALID", "POLICY_REJECT"]:
-                        break
-                    state.strategy_revision_round += 1
-                    state.review_feedback = {
-                        "reject_code": verdict.reject_code,
-                        "message": verdict.message,
-                        "fix_suggestions": verdict.fix_suggestions,
-                        "checks": verdict.checks
-                    }
-        
-                # Check for POLICY_REJECT with Fix Suggestions
-                if state.risk_verdict and not state.risk_verdict.approved:
-                    # If Fix Suggestions are available and critical, emit specific alert
-                    if state.risk_verdict.fix_suggestions and "deposit" in str(state.risk_verdict.fix_suggestions).lower():
-                        await self.analyst.emit_log(
-                            content="⚠️ CRITICAL: Reviewer suggests depositing funds. Automated notification sent.",
-                            log_type="warning",
-                            session_id=session_id
-                        )
-                        # Here we would integrate with a Notification Service (Email/Telegram)
-                        # await self.notification_service.send_alert("Margin Call Risk: Please Deposit Funds")
-
-                # 5. Step 4: Reflector
-                print("--- Reflector Turn ---", flush=True)
-                await self.reflector.run(state)
-
-                print("Workflow Completed.", flush=True)
-                
-                # Update Session Status to COMPLETED with Decision Info
-                try:
-                    update_payload = {"status": "COMPLETED"}
-                    
-                    if state.strategy_proposal:
-                        update_payload["action"] = state.strategy_proposal.action
-                        if state.strategy_proposal.action == "HOLD":
-                            update_payload["review_status"] = "SKIPPED"
-                    
-                    if state.risk_verdict:
-                        update_payload["review_status"] = "APPROVED" if state.risk_verdict.approved else "REJECTED"
-
-                    async with httpx.AsyncClient() as client:
-                        await client.patch(
-                            f"{self.backend_url}/api/v1/workflow/session/{session_id}",
-                            json=update_payload
-                        )
-                except Exception as e:
-                    print(f"Warning: Failed to update session status: {e}", flush=True)
-
-                return state
+            return state
             except Exception as e:
                 print(f"CRITICAL WORKFLOW ERROR: {e}", flush=True)
                 import traceback
