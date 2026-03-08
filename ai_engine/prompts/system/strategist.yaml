@@ -60,7 +60,7 @@ template: |
   # Output Format (Strict JSON)
   {{
       "action": "LONG" | "SHORT" | "SELL" | "COVER" | "HOLD",
-      "entry_price": float | null,
+      "entry_price": float, # REQUIRED. Use current market price for Market Orders.
       "quantity": float | null,
       "stop_loss": float | null,
       "take_profit": float | null,

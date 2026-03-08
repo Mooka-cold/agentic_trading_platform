@@ -366,10 +366,12 @@ class Strategist(BaseAgent):
                     }
                 )
             else:
+                entry_val = proposal.entry_price if proposal.entry_price is not None else state.market_data.price
+                entry_str = f"{entry_val:.2f}" + (" (Mkt)" if proposal.entry_price is None else "")
+                
                 qty_str = f"{proposal.quantity:.4f}" if proposal.quantity is not None else "N/A"
                 sl_str = f"{proposal.stop_loss:.2f}" if proposal.stop_loss is not None else "N/A"
                 tp_str = f"{proposal.take_profit:.2f}" if proposal.take_profit is not None else "N/A"
-                entry_str = f"{proposal.entry_price:.2f}" if proposal.entry_price is not None else "N/A"
                 conf_str = f"{proposal.confidence:.2f}" if proposal.confidence is not None else "N/A"
                 
                 rr = "N/A"
@@ -456,13 +458,24 @@ class Reviewer(BaseAgent):
             return {"risk_verdict": verdict}
 
         metrics = compute_trade_metrics(proposal.action, proposal.entry_price, proposal.stop_loss, proposal.take_profit)
+        
+        # Determine which checks to apply based on Action Type
+        # OPENING positions (LONG, SHORT) require strict Risk/Reward and SL checks.
+        # CLOSING positions (SELL, COVER) are risk reduction events, so R/R checks are irrelevant.
+        is_opening = proposal.action in ["LONG", "SHORT"]
+        
         checks = {
-            "sl_side": "PASS" if metrics.get("sl_side_ok") else "FAIL",
-            "tp_side": "PASS" if metrics.get("tp_side_ok") else "FAIL",
-            "direction": "PASS" if metrics.get("direction_ok") else "FAIL",
-            "sl_distance": "PASS" if (metrics.get("sl_distance_pct") is not None and metrics["sl_distance_pct"] <= 0.03) else "FAIL",
-            "rr_ratio": "PASS" if (metrics.get("rr_ratio") is not None and metrics["rr_ratio"] >= 1.5) else "FAIL"
+            "sl_side": "PASS" if (not is_opening or metrics.get("sl_side_ok")) else "FAIL",
+            "tp_side": "PASS" if (not is_opening or metrics.get("tp_side_ok")) else "FAIL",
+            "direction": "PASS" if (not is_opening or metrics.get("direction_ok")) else "FAIL",
+            "sl_distance": "PASS" if (not is_opening or (metrics.get("sl_distance_pct") is not None and metrics["sl_distance_pct"] <= 0.03)) else "FAIL",
+            "rr_ratio": "PASS" if (not is_opening or (metrics.get("rr_ratio") is not None and metrics["rr_ratio"] >= 1.5)) else "FAIL"
         }
+        
+        # Override checks for Closing Actions to always PASS (unless specific logic added later)
+        if not is_opening:
+            checks = {k: "PASS" for k in checks}
+
         if checks["direction"] == "FAIL":
             verdict = RiskVerdict(
                 approved=False,
