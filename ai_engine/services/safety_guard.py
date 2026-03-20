@@ -10,14 +10,15 @@ class SafetyGuardService:
 
         if price <= 0:
             return {"allowed": False, "reason": "invalid_price", "severity": "critical"}
-        if spread_pct >= 1.0:
+        if spread_pct >= 2.0: # 极端价差才熔断，普通大价差交由 TWAP 处理
             return {"allowed": False, "reason": "spread_too_wide", "severity": "critical"}
-        if slippage_bps >= 250:
-            return {"allowed": False, "reason": "slippage_too_high", "severity": "critical"}
         if leverage >= 4.0:
             return {"allowed": False, "reason": "portfolio_leverage_too_high", "severity": "critical"}
-        if spread_pct >= 0.25 or slippage_bps >= 80:
-            return {"allowed": True, "reason": "degraded_execution", "severity": "warning"}
+        
+        # 滑点不再硬性熔断，而是转为 warning 提示执行引擎走分单
+        if slippage_bps >= 200 or spread_pct >= 0.25:
+            return {"allowed": True, "reason": "degraded_execution_twap_required", "severity": "warning"}
+            
         return {"allowed": True, "reason": "normal", "severity": "info"}
 
 

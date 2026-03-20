@@ -118,6 +118,11 @@ class MarketIntelService:
         preferred_order_type = "MARKET"
         if micro.get("estimated_slippage_bps", 0.0) >= 20 or micro.get("spread_pct", 0.0) >= 0.08:
             preferred_order_type = "LIMIT"
+            
+        execution_algo = "STANDARD"
+        if micro.get("estimated_slippage_bps", 0.0) >= 200 or micro.get("liquidity_tier") == "thin":
+            execution_algo = "TWAP"
+            
         rr_floor = 1.5
         if regime.get("regime") in {"TRENDING_UP", "TRENDING_DOWN"}:
             rr_floor = 1.35
@@ -135,6 +140,7 @@ class MarketIntelService:
         }
         return {
             "preferred_order_type": preferred_order_type,
+            "execution_algo": execution_algo,
             "rr_floor": rr_floor,
             "gate_policy": gate_policy,
         }

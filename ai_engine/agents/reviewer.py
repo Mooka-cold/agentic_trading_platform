@@ -627,6 +627,8 @@ class Reviewer(BaseAgent):
                     if verdict.adjusted_size:
                          await self.think(f"Applying Risk-Adjusted Size: {final_quantity}", session_id)
 
+                    execution_algo = state.execution_constraints.get("execution_algo", "STANDARD") if state.execution_constraints else "STANDARD"
+                    
                     data = await execution_service.execute_order(
                         action=proposal.action,
                         symbol=state.market_data.symbol,
@@ -637,7 +639,8 @@ class Reviewer(BaseAgent):
                         confidence=proposal.confidence,
                         session_id=session_id,
                         order_type=proposal.order_type,
-                        trigger_condition=proposal.trigger_condition
+                        trigger_condition=proposal.trigger_condition,
+                        execution_algo=execution_algo
                     )
                     
                     state.execution_result = data # Save result for Reflector
