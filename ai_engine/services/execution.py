@@ -6,7 +6,19 @@ class ExecutionService:
     def __init__(self):
         self.backend_url = settings.BACKEND_URL
 
-    async def execute_order(self, action: str, symbol: str, quantity: float, price: float, confidence: float, session_id: str = None, stop_loss: float = None, take_profit: float = None) -> Dict[str, Any]:
+    async def execute_order(
+        self,
+        action: str,
+        symbol: str,
+        quantity: float,
+        price: float,
+        confidence: float,
+        session_id: str = None,
+        stop_loss: float = None,
+        take_profit: float = None,
+        order_type: str = "MARKET",
+        trigger_condition: str = None
+    ) -> Dict[str, Any]:
         """
         Send order execution request to Backend Trade API.
         """
@@ -18,7 +30,9 @@ class ExecutionService:
             "confidence": confidence,
             "session_id": session_id,
             "stop_loss": stop_loss,
-            "take_profit": take_profit
+            "take_profit": take_profit,
+            "order_type": order_type,
+            "trigger_condition": trigger_condition
         }
         
         try:

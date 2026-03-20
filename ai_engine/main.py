@@ -37,8 +37,12 @@ async def startup_event():
         import json
         redis_client = workflow_engine.redis_client
         loop_active = await redis_client.get("system_status:loop_active")
-        if loop_active and loop_active.decode() == "true":
+        if isinstance(loop_active, bytes):
+            loop_active = loop_active.decode()
+        if loop_active == "true":
             config_str = await redis_client.get("system_status:loop_config")
+            if isinstance(config_str, bytes):
+                config_str = config_str.decode()
             if config_str:
                 config = json.loads(config_str)
                 symbol = config.get("symbol", "BTC/USDT")
@@ -63,6 +67,11 @@ class AnalysisRequest(BaseModel):
 class UserConfigUpdate(BaseModel):
     config: Dict[str, Any]
 
+class SentimentInterpreterRequest(BaseModel):
+    symbol: str = "BTC/USDT"
+    claim_limit: int = 200
+    concurrency: int = 20
+
 @app.post("/analyze")
 async def analyze_market(req: AnalysisRequest):
     # Trigger LLM analysis
@@ -76,6 +85,16 @@ async def analyze_market(req: AnalysisRequest):
 async def trigger_periodic_reviews(background_tasks: BackgroundTasks):
     """Trigger periodic review process (T+1/6/24h)"""
     # Run in background to avoid blocking
+    # Corrected: Call async function directly in background task? 
+    # BackgroundTasks expects a synchronous callable or an async coroutine function (not a coroutine object)
+    # But workflow_engine.reflector.run_periodic_reviews is an async method.
+    # FastAPI handles async methods in background tasks correctly.
+    # However, workflow_engine.reflector might be None if not initialized?
+    # It is initialized in __init__ -> reload_agents.
+    
+    if not workflow_engine.reflector:
+        raise HTTPException(status_code=503, detail="Reflector Agent not ready")
+
     background_tasks.add_task(workflow_engine.reflector.run_periodic_reviews)
     return {"status": "review_triggered"}
 
@@ -87,6 +106,55 @@ async def reload_config():
         return {"status": "reloaded"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/sentiment/interpreter/run")
+async def run_sentiment_interpreter(background_tasks: BackgroundTasks, req: Optional[SentimentInterpreterRequest] = None):
+    symbol = req.symbol if req else "BTC/USDT"
+    claim_limit = req.claim_limit if req else 200
+    concurrency = req.concurrency if req else 20
+    async def _run():
+        try:
+            await workflow_engine.sentiment_agent.run_news_interpreter_cycle(
+                symbol=symbol,
+                claim_limit=claim_limit,
+                concurrency=concurrency
+            )
+        except Exception as exc:
+            print(f"Sentiment interpreter run failed: {exc}")
+    background_tasks.add_task(_run)
+    return {"status": "triggered"}
+
+@app.get("/sentiment/aggregate")
+async def get_sentiment_aggregate(symbol: str = "BTC/USDT"):
+    from services.sentiment import sentiment_service
+    fng = await sentiment_service.get_fear_greed_index()
+    return sentiment_service.aggregate_interpreted_news(symbol, fng)
+
+@app.get("/sentiment/interpretations")
+async def get_sentiment_interpretations(symbol: str = "BTC/USDT", limit: int = 20, scope: str = "symbol"):
+    from services.sentiment import sentiment_service
+    safe_limit = max(1, min(limit, 100))
+    safe_scope = "all" if str(scope).lower() == "all" else "symbol"
+    return sentiment_service.get_recent_interpretations(target_symbol=symbol, limit=safe_limit, scope=safe_scope)
+
+@app.get("/sentiment/monitor")
+async def get_sentiment_monitor(hours: int = 24):
+    from services.sentiment import sentiment_service
+    return sentiment_service.get_interpretation_monitor(hours=hours)
+
+@app.post("/sentiment/reload-config")
+async def reload_sentiment_config():
+    from services.sentiment import sentiment_service
+    try:
+        active = sentiment_service.reload_tuning_from_system_config()
+        return {"status": "reloaded", "active_params": active}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/sentiment/active-config")
+async def get_sentiment_active_config():
+    from services.sentiment import sentiment_service
+    return {"active_params": sentiment_service.get_active_tuning_params()}
 
 @app.post("/workflow/run")
 async def run_workflow_endpoint(req: AnalysisRequest):

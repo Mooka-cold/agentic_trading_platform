@@ -19,6 +19,6 @@ def get_news(limit: int = 10, db: Session = Depends(get_user_db)):
     """
     Get latest news from DB.
     """
-    from app.models.news import News
+    from shared.models.news import News
     news = db.query(News).order_by(News.published_at.desc()).limit(limit).all()
     return news

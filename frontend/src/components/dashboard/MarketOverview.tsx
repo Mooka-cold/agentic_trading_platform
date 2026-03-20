@@ -1,18 +1,103 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, ChevronUp, TrendingUp, AlertTriangle, Activity } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { ChevronDown, ChevronUp, Activity, Zap, Pause } from "lucide-react";
 
 interface MarketOverviewProps {
     marketData: any;
     signal: any;
+    symbol: string;
 }
 
-export const MarketOverview = ({ marketData, signal }: MarketOverviewProps) => {
+export const MarketOverview = ({ marketData, signal, symbol }: MarketOverviewProps) => {
     const [isReasoningOpen, setIsReasoningOpen] = useState(true);
+    const [isRunning, setIsRunning] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [liveSignal, setLiveSignal] = useState<any>(null);
+    const [liveReasoning, setLiveReasoning] = useState<string>("");
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3201";
 
-    const isBullish = signal?.bias === 'BULLISH';
-    const isBearish = signal?.bias === 'BEARISH';
+    // Fetch running status
+    const checkStatus = useCallback(async () => {
+        try {
+            const res = await fetch(`${apiUrl}/api/v1/workflow/runner/status`);
+            if (res.ok) {
+                const data = await res.json();
+                setIsRunning(Boolean(data.is_running));
+            }
+        } catch (e) {
+            console.error("Status check failed", e);
+        }
+    }, [apiUrl]);
+
+    useEffect(() => {
+        checkStatus();
+        const interval = setInterval(checkStatus, 2000);
+        return () => clearInterval(interval);
+    }, [checkStatus]);
+
+    useEffect(() => {
+        const streamSymbol = symbol || "BTC/USDT";
+        const evtSource = new EventSource(`/api/ai_engine/stream/monitor?symbol=${encodeURIComponent(streamSymbol)}`);
+        evtSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (!data || !data.agent_id || !data.content) return;
+                const artifact = data.artifact && typeof data.artifact === "object" ? data.artifact : null;
+                if (artifact) {
+                    setLiveSignal((prev: any) => ({
+                        ...(prev || {}),
+                        ...artifact
+                    }));
+                }
+                if (artifact?.reasoning && typeof artifact.reasoning === "string") {
+                    setLiveReasoning(artifact.reasoning);
+                } else {
+                    const prefix = String(data.agent_id).toUpperCase();
+                    setLiveReasoning(`${prefix}: ${String(data.content)}`);
+                }
+            } catch {
+            }
+        };
+        evtSource.onerror = () => {
+            evtSource.close();
+        };
+        return () => evtSource.close();
+    }, [symbol]);
+
+    const toggleWorkflow = async () => {
+        setIsProcessing(true);
+        try {
+            const url = isRunning 
+                ? `${apiUrl}/api/v1/workflow/stop`
+                : `${apiUrl}/api/v1/workflow/run`;
+            
+            const method = "POST";
+            const body = isRunning ? {} : { symbol: "BTC/USDT" };
+            
+            const res = await fetch(url, {
+                method,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+            
+            if (res.ok) {
+                await checkStatus();
+            } else {
+                const errorText = await res.text();
+                console.error("Toggle failed", errorText);
+            }
+        } catch (e) {
+            console.error("Toggle failed", e);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    const displaySignal = liveSignal || signal;
+    const displayReasoning = liveReasoning || displaySignal?.reasoning || "AI Analyst is processing market data...";
+    const isBullish = displaySignal?.bias === 'BULLISH';
+    const isBearish = displaySignal?.bias === 'BEARISH';
     
     return (
         <div style={{ 
@@ -45,26 +130,60 @@ export const MarketOverview = ({ marketData, signal }: MarketOverviewProps) => {
                     </div>
                 </div>
                 
-                {/* AI Signal Badge (Enhanced) */}
-                <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '4px', fontWeight: 'bold', letterSpacing: '0.5px' }}>AI SIGNAL</div>
+                {/* Control Button & Signal */}
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                    
+                    <button
+                        onClick={toggleWorkflow}
+                        disabled={isProcessing}
+                        style={{
+                            backgroundColor: isRunning ? '#ef4444' : '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            cursor: isProcessing ? 'wait' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            opacity: isProcessing ? 0.7 : 1,
+                            boxShadow: isRunning ? '0 0 10px rgba(239, 68, 68, 0.3)' : '0 0 10px rgba(59, 130, 246, 0.3)'
+                        }}
+                    >
+                        {isProcessing ? (
+                            <span>...</span>
+                        ) : isRunning ? (
+                            <>
+                                <Pause size={14} fill="currentColor" />
+                                STOP AUTO
+                            </>
+                        ) : (
+                            <>
+                                <Zap size={14} fill="currentColor" />
+                                START AUTO
+                            </>
+                        )}
+                    </button>
+
                     <div style={{ 
                         backgroundColor: isBullish ? '#22c55e' : isBearish ? '#ef4444' : '#475569',
                         color: 'white',
-                        padding: '8px 16px',
-                        borderRadius: '8px',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
                         fontWeight: '800',
-                        fontSize: '14px',
+                        fontSize: '12px',
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: isBullish ? '0 0 15px rgba(34, 197, 94, 0.4)' : isBearish ? '0 0 15px rgba(239, 68, 68, 0.4)' : 'none',
+                        gap: '6px',
+                        boxShadow: isBullish ? '0 0 15px rgba(34, 197, 94, 0.2)' : isBearish ? '0 0 15px rgba(239, 68, 68, 0.2)' : 'none',
                         border: '1px solid rgba(255,255,255,0.1)'
                     }}>
-                        <Activity size={16} />
-                        {signal?.bias || 'NEUTRAL'} 
-                        <span style={{ opacity: 0.8, fontSize: '12px', marginLeft: '4px', borderLeft: '1px solid rgba(255,255,255,0.3)', paddingLeft: '8px' }}>
-                            {Math.round((signal?.confidence || 0) * 100)}%
+                        <Activity size={14} />
+                        {displaySignal?.bias || 'NEUTRAL'} 
+                        <span style={{ opacity: 0.8, fontSize: '10px', marginLeft: '4px', borderLeft: '1px solid rgba(255,255,255,0.3)', paddingLeft: '6px' }}>
+                            {Math.round((displaySignal?.confidence || 0) * 100)}%
                         </span>
                     </div>
                 </div>
@@ -104,7 +223,7 @@ export const MarketOverview = ({ marketData, signal }: MarketOverviewProps) => {
                         maxHeight: '120px',
                         overflowY: 'auto'
                     }}>
-                        {signal?.reasoning || "AI Analyst is processing market data..."}
+                        {displayReasoning}
                     </div>
                 )}
             </div>

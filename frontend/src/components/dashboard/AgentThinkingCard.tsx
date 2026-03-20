@@ -14,10 +14,12 @@ import {
   Wallet,
   TrendingUp,
   TrendingDown,
-  DollarSign
+  DollarSign,
+  History,
+  ExternalLink
 } from "lucide-react";
 import { MarketAPI } from "@/lib/api/market";
-import { formatTime } from "@/lib/utils";
+import { formatTime, formatDateTime } from "@/lib/utils";
 
 // --- Types ---
 
@@ -57,6 +59,21 @@ interface Position {
     quantity: number;
     pnl?: number;
     pnl_percent?: number;
+}
+
+interface Order {
+    id: string;
+    session_id: string;
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    type: string;
+    intent?: string; // Add intent
+    price: number;
+    quantity: number;
+    status: string;
+    created_at: string;
+    filled_at?: string;
+    pnl?: number;
 }
 
 // --- Configuration (Based on ai_engine/prompts) ---
@@ -956,16 +973,27 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 // --- Portfolio Sidebar Component ---
 const PortfolioSidebar = () => {
     const [positions, setPositions] = useState<Position[]>([]);
+    const [orders, setOrders] = useState<Order[]>([]);
     const [balance, setBalance] = useState<number>(0);
     const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState<'positions' | 'history'>('positions');
 
     const fetchData = async () => {
         try {
-            // Fetch Balance
-            const balanceRes = await fetch(`${API_URL}/api/v1/trade/balance?currency=USDT`);
+            // Fetch Balance (Use the new paper account endpoint for real data)
+            const balanceRes = await fetch(`${API_URL}/api/v1/trade/paper/account`);
             if (balanceRes.ok) {
                 const data = await balanceRes.json();
+                // Store actual balance (cash) instead of total equity, 
+                // since the UI labels it "AVAILABLE BALANCE / CASH"
                 setBalance(parseFloat(data.balance || 0));
+            } else {
+                // Fallback to old endpoint if paper account fails
+                const oldBalanceRes = await fetch(`${API_URL}/api/v1/trade/balance?currency=USDT`);
+                if (oldBalanceRes.ok) {
+                    const data = await oldBalanceRes.json();
+                    setBalance(parseFloat(data.balance || 0));
+                }
             }
 
             // Fetch Positions
@@ -1014,6 +1042,14 @@ const PortfolioSidebar = () => {
 
                 setPositions(enhancedPositions);
             }
+
+            // Fetch History
+            const historyRes = await fetch(`${API_URL}/api/v1/trade/orders?limit=20`);
+            if (historyRes.ok) {
+                const data = await historyRes.json();
+                setOrders(data);
+            }
+
         } catch (e) {
             console.error("Failed to fetch portfolio data", e);
         } finally {
@@ -1029,15 +1065,53 @@ const PortfolioSidebar = () => {
 
     return (
         <div style={{ 
-            width: '280px', 
+            width: '300px', 
             borderLeft: '1px solid #1e293b', 
             backgroundColor: '#0f172a',
             display: 'flex',
             flexDirection: 'column'
         }}>
-            <div style={{ padding: '12px', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Wallet size={16} className="text-blue-400" />
-                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#e2e8f0' }}>LIVE PORTFOLIO</span>
+            <div style={{ display: 'flex', borderBottom: '1px solid #1e293b' }}>
+                <button 
+                    onClick={() => setActiveTab('positions')}
+                    style={{
+                        flex: 1,
+                        padding: '12px',
+                        backgroundColor: activeTab === 'positions' ? '#1e293b' : 'transparent',
+                        color: activeTab === 'positions' ? '#e2e8f0' : '#64748b',
+                        border: 'none',
+                        borderBottom: activeTab === 'positions' ? '2px solid #3b82f6' : '2px solid transparent',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px'
+                    }}
+                >
+                    <Wallet size={14} /> POSITIONS
+                </button>
+                <button 
+                    onClick={() => setActiveTab('history')}
+                    style={{
+                        flex: 1,
+                        padding: '12px',
+                        backgroundColor: activeTab === 'history' ? '#1e293b' : 'transparent',
+                        color: activeTab === 'history' ? '#e2e8f0' : '#64748b',
+                        border: 'none',
+                        borderBottom: activeTab === 'history' ? '2px solid #3b82f6' : '2px solid transparent',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px'
+                    }}
+                >
+                    <History size={14} /> HISTORY
+                </button>
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
@@ -1045,12 +1119,13 @@ const PortfolioSidebar = () => {
                     <div style={{ textAlign: 'center', color: '#64748b', fontSize: '12px', marginTop: '20px' }}>Loading...</div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {/* Cash Position */}
+                        {/* Cash Position - Always Visible */}
                         <div style={{ 
                             backgroundColor: '#1e293b', 
                             borderRadius: '8px', 
                             padding: '10px',
-                            border: '1px solid #334155'
+                            border: '1px solid #334155',
+                            marginBottom: '8px'
                         }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                                 <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'white' }}>USDT</span>
@@ -1072,65 +1147,152 @@ const PortfolioSidebar = () => {
                             </div>
                         </div>
 
-                        {/* Trade Positions */}
-                        {positions.length === 0 && (
-                            <div style={{ textAlign: 'center', color: '#64748b', fontSize: '12px', marginTop: '10px', fontStyle: 'italic' }}>
-                                No open trades.
-                            </div>
-                        )}
+                        {activeTab === 'positions' ? (
+                            <>
+                                {positions.length === 0 && (
+                                    <div style={{ textAlign: 'center', color: '#64748b', fontSize: '12px', marginTop: '10px', fontStyle: 'italic' }}>
+                                        No open trades.
+                                    </div>
+                                )}
 
-                        {positions.map((pos, idx) => {
-                            const isLong = pos.side.toUpperCase() === 'LONG' || pos.side.toUpperCase() === 'BUY';
-                            const pnl = pos.pnl || 0;
-                            const pnlPercent = pos.pnl_percent || 0;
-                            const isProfit = pnl >= 0;
+                                {positions.map((pos, idx) => {
+                                    const isLong = pos.side.toUpperCase() === 'LONG' || pos.side.toUpperCase() === 'BUY';
+                                    const pnl = pos.pnl || 0;
+                                    const pnlPercent = pos.pnl_percent || 0;
+                                    const isProfit = pnl >= 0;
 
-                            return (
-                                <div key={idx} style={{ 
-                                    backgroundColor: '#1e293b', 
-                                    borderRadius: '8px', 
-                                    padding: '10px',
-                                    border: '1px solid #334155'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                                        <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'white' }}>{pos.symbol}</span>
-                                        <span style={{ 
-                                            fontSize: '11px', 
-                                            fontWeight: 'bold', 
-                                            color: isLong ? '#22c55e' : '#ef4444',
-                                            backgroundColor: isLong ? '#22c55e20' : '#ef444420',
-                                            padding: '2px 6px',
-                                            borderRadius: '4px'
+                                    return (
+                                        <div key={idx} style={{ 
+                                            backgroundColor: '#1e293b', 
+                                            borderRadius: '8px', 
+                                            padding: '10px',
+                                            border: '1px solid #334155'
                                         }}>
-                                            {pos.side}
-                                        </span>
-                                    </div>
-                                    
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px', color: '#94a3b8' }}>
-                                        <div>
-                                            <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Entry</div>
-                                            <div style={{ color: '#cbd5e1' }}>{pos.entry_price.toFixed(2)}</div>
-                                        </div>
-                                        <div>
-                                            <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Size</div>
-                                            <div style={{ color: '#cbd5e1' }}>{pos.quantity}</div>
-                                        </div>
-                                        <div>
-                                            <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Current</div>
-                                            <div style={{ color: '#cbd5e1' }}>{pos.current_price.toFixed(2)}</div>
-                                        </div>
-                                    </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                                <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'white' }}>{pos.symbol}</span>
+                                                <span style={{ 
+                                                    fontSize: '11px', 
+                                                    fontWeight: 'bold', 
+                                                    color: isLong ? '#22c55e' : '#ef4444',
+                                                    backgroundColor: isLong ? '#22c55e20' : '#ef444420',
+                                                    padding: '2px 6px',
+                                                    borderRadius: '4px'
+                                                }}>
+                                                    {pos.side}
+                                                </span>
+                                            </div>
+                                            
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px', color: '#94a3b8' }}>
+                                                <div>
+                                                    <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Entry</div>
+                                                    <div style={{ color: '#cbd5e1' }}>{pos.entry_price.toFixed(2)}</div>
+                                                </div>
+                                                <div>
+                                                    <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Size</div>
+                                                    <div style={{ color: '#cbd5e1' }}>{pos.quantity}</div>
+                                                </div>
+                                                <div>
+                                                    <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Current</div>
+                                                    <div style={{ color: '#cbd5e1' }}>{pos.current_price.toFixed(2)}</div>
+                                                </div>
+                                            </div>
 
-                                    <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ fontSize: '10px', color: '#64748b' }}>PnL</span>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: isProfit ? '#22c55e' : '#ef4444', fontWeight: 'bold', fontSize: '12px' }}>
-                                            {isProfit ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                                            {pnl > 0 ? '+' : ''}{pnlPercent.toFixed(2)}% <span style={{fontSize: '10px', opacity: 0.8}}>(${pnl.toFixed(2)})</span>
+                                            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ fontSize: '10px', color: '#64748b' }}>PnL</span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: isProfit ? '#22c55e' : '#ef4444', fontWeight: 'bold', fontSize: '12px' }}>
+                                                    {isProfit ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                                    {pnl > 0 ? '+' : ''}{pnlPercent.toFixed(2)}% <span style={{fontSize: '10px', opacity: 0.8}}>(${pnl.toFixed(2)})</span>
+                                                </div>
+                                            </div>
                                         </div>
+                                    );
+                                })}
+                            </>
+                        ) : (
+                            <>
+                                {orders.length === 0 && (
+                                    <div style={{ textAlign: 'center', color: '#64748b', fontSize: '12px', marginTop: '10px', fontStyle: 'italic' }}>
+                                        No history yet.
                                     </div>
-                                </div>
-                            );
-                        })}
+                                )}
+                                {orders.map((order) => (
+                                    <div key={order.id} style={{ 
+                                        backgroundColor: '#1e293b', 
+                                        borderRadius: '8px', 
+                                        padding: '10px',
+                                        border: '1px solid #334155'
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', alignItems: 'center' }}>
+                                            <span style={{ fontWeight: 'bold', fontSize: '12px', color: 'white' }}>{order.symbol}</span>
+                                            <span style={{ 
+                                                fontSize: '10px', 
+                                                fontWeight: 'bold', 
+                                                color: order.side.toUpperCase() === 'BUY' ? '#22c55e' : '#ef4444',
+                                                backgroundColor: order.side.toUpperCase() === 'BUY' ? '#22c55e20' : '#ef444420',
+                                                padding: '2px 6px',
+                                                borderRadius: '4px'
+                                            }}>
+                                                {order.intent ? order.intent.replace(/_/g, ' ') : order.side}
+                                            </span>
+                                        </div>
+                                        
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px', color: '#94a3b8' }}>
+                                            <div>
+                                                <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Price</div>
+                                                <div style={{ color: '#cbd5e1' }}>{order.price.toFixed(2)}</div>
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: '9px', textTransform: 'uppercase' }}>Size</div>
+                                                <div style={{ color: '#cbd5e1' }}>{order.quantity}</div>
+                                            </div>
+                                        </div>
+
+                                        <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '10px', color: '#64748b' }}>{formatDateTime(order.filled_at || order.created_at)}</span>
+                                            {order.pnl != null && (
+                                                <span style={{ 
+                                                    fontSize: '11px', 
+                                                    fontWeight: 'bold', 
+                                                    color: order.pnl >= 0 ? '#22c55e' : '#ef4444' 
+                                                }}>
+                                                    {order.pnl >= 0 ? '+' : ''}{order.pnl.toFixed(2)}
+                                                </span>
+                                            )}
+                                        </div>
+                                        
+                                        {order.session_id && (
+                                            <div style={{ marginTop: '8px' }}>
+                                                <button 
+                                                    onClick={() => {
+                                                        const url = `/history?session_id=${order.session_id}`;
+                                                        window.open(url, '_blank');
+                                                    }}
+                                                    style={{
+                                                        width: '100%',
+                                                        padding: '6px',
+                                                        backgroundColor: '#334155',
+                                                        border: 'none',
+                                                        borderRadius: '4px',
+                                                        color: '#e2e8f0',
+                                                        fontSize: '10px',
+                                                        cursor: 'pointer',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px',
+                                                        transition: 'background-color 0.2s'
+                                                    }}
+                                                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#475569'}
+                                                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#334155'}
+                                                >
+                                                    <ExternalLink size={12} /> View Session
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </>
+                        )}
                     </div>
                 )}
             </div>
@@ -1166,6 +1328,7 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [tradingSymbol, setTradingSymbol] = useState("BTC/USDT");
 
   // Hydrate state from backend persistence
   useEffect(() => {
@@ -1184,6 +1347,7 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
 
                   if (running) {
                       const symbol = statusData.symbol || "BTC/USDT";
+                      setTradingSymbol(symbol);
                       // Only connect if not already connected or symbol changed
                       if (!eventSourceRef.current || !eventSourceRef.current.url.includes(encodeURIComponent(symbol))) {
                           connectMonitor(symbol);
@@ -1203,7 +1367,7 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
               const hasLogs = Object.values(agentsState).some(s => s.logs.length > 0);
               
               if (!isLoopActive || !hasLogs) {
-                  const res = await fetch(`${API_URL}/api/v1/workflow/latest?symbol=BTC/USDT`);
+                  const res = await fetch(`${API_URL}/api/v1/workflow/latest?symbol=${encodeURIComponent(tradingSymbol)}`);
                   if (res.ok) {
                       const data = await res.json();
                       if (data.session && data.session.logs.length > 0) {
@@ -1227,7 +1391,7 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
       hydrate();
       const interval = setInterval(hydrate, 5000);
       return () => clearInterval(interval);
-  }, [isLoopActive]); // Re-run when active state changes
+  }, [isLoopActive, tradingSymbol]); // Re-run when active state or symbol changes
 
   const updateStateFromLogs = (logs: any[]) => {
       setAgentsState(prev => {
@@ -1407,14 +1571,14 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
     // Note: In a real app, we might want to store this ID in URL or context
     
     // In Continuous Mode, we connect to the MONITOR channel, not the specific session channel
-    connectMonitor("BTC/USDT");
+    connectMonitor(tradingSymbol);
 
     try {
         const response = await fetch("/api/ai_engine/workflow/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                symbol: "BTC/USDT",
+                symbol: tradingSymbol,
                 session_id: sessionId
             })
         });
@@ -1448,6 +1612,39 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {!isLoopActive ? (
+                <select 
+                    value={tradingSymbol}
+                    onChange={(e) => setTradingSymbol(e.target.value)}
+                    style={{
+                        backgroundColor: '#1e293b',
+                        color: '#e2e8f0',
+                        border: '1px solid #334155',
+                        borderRadius: '4px',
+                        padding: '4px 8px',
+                        fontSize: '11px',
+                        outline: 'none',
+                        cursor: 'pointer'
+                    }}
+                >
+                    <option value="BTC/USDT">BTC/USDT</option>
+                    <option value="ETH/USDT">ETH/USDT</option>
+                    <option value="SOL/USDT">SOL/USDT</option>
+                </select>
+            ) : (
+                <span style={{ 
+                    fontSize: '11px', 
+                    color: '#94a3b8', 
+                    backgroundColor: '#1e293b', 
+                    padding: '4px 8px', 
+                    borderRadius: '4px',
+                    fontFamily: 'monospace',
+                    fontWeight: 'bold'
+                }}>
+                    {tradingSymbol}
+                </span>
+            )}
+
             {errorMessage && (
                 <span style={{ fontSize: '12px', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <AlertCircle size={14} /> {errorMessage}

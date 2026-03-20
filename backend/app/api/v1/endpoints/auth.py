@@ -2,7 +2,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlalchemy.orm import Session
 from app.db.session import get_user_db
-from app.models.user import User
+from shared.models.user import User
 from pydantic import BaseModel
 import secrets
 from eth_account import Account

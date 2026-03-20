@@ -2,7 +2,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.db.session import get_user_db
-from app.models.signal import Signal
+from shared.models.signal import Signal
 from pydantic import BaseModel
 from datetime import datetime
 from uuid import UUID

@@ -1,18 +1,24 @@
-from logging.config import fileConfig
+import sys
+from pathlib import Path
+root = Path(__file__).resolve().parent.parent.parent
+backend = Path(__file__).resolve().parent.parent
+sys.path.append(str(root))
+sys.path.append(str(backend))
 
+from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-
 from alembic import context
 
 # Import your models here
 from app.core.config import settings
 from app.db.base import Base
-from app.models.user import User, Strategy, Order
-from app.models.news import News
-from app.models.signal import Signal 
-from app.models.system import SystemConfig
-from app.models.workflow import WorkflowSession, AgentLog, WorkflowStatus
+from shared.models.user import User, Strategy, Order
+from shared.models.news import News
+from shared.models.signal import Signal
+from shared.models.system import SystemConfig
+from shared.models.workflow import WorkflowSession, AgentLog, WorkflowStatus
+from app.services.paper_trading import PaperAccount, PaperOrder, PaperPosition, SessionReflection
 # Ensure all models are imported so Base.metadata knows about them
 
 # this is the Alembic Config object, which provides

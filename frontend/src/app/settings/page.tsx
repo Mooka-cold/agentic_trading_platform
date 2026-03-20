@@ -61,9 +61,10 @@ const TabButton = ({ icon, label, active, onClick }: { icon: any, label: string,
 const AgentSettings = () => {
   const [model, setModel] = useState("gpt-4-turbo");
   const [riskLevel, setRiskLevel] = useState("medium");
+  const [outputLanguage, setOutputLanguage] = useState("zh");
   const [systemPrompt, setSystemPrompt] = useState("You are an expert crypto quant trader...");
   const [loading, setLoading] = useState(false);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
 
   useEffect(() => {
     const fetchConfigs = async () => {
@@ -74,9 +75,11 @@ const AgentSettings = () => {
                 const m = configs.find((c: any) => c.key === "LLM_MODEL");
                 const r = configs.find((c: any) => c.key === "RISK_LEVEL");
                 const p = configs.find((c: any) => c.key === "STRATEGIST_PROMPT");
+                const l = configs.find((c: any) => c.key === "AGENT_OUTPUT_LANGUAGE");
                 if (m) setModel(m.value);
                 if (r) setRiskLevel(r.value);
                 if (p) setSystemPrompt(p.value);
+                if (l) setOutputLanguage(l.value);
             }
         } catch (e) { console.error(e); }
     };
@@ -98,6 +101,10 @@ const AgentSettings = () => {
             fetch(`${API_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "STRATEGIST_PROMPT", value: systemPrompt, description: "Strategist System Prompt" })
+            }),
+            fetch(`${API_URL}/api/v1/system/config`, {
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ key: "AGENT_OUTPUT_LANGUAGE", value: outputLanguage, description: "Agent Output Language" })
             })
         ];
         await Promise.all(tasks);
@@ -130,6 +137,22 @@ const AgentSettings = () => {
         <option disabled>--- DeepSeek ---</option>
         <option value="deepseek-chat">DeepSeek Chat</option>
         <option value="deepseek-reasoner">DeepSeek Reasoner</option>
+      </select>
+    </div>
+
+    <div className="space-y-3">
+      <label className="font-bold text-gray-200 flex items-center gap-2">
+        <Cpu size={16} className="text-green-500" />
+        Agent Output Language
+      </label>
+      <p className="text-sm text-gray-500">Select the language for all agent outputs.</p>
+      <select
+        value={outputLanguage}
+        onChange={(e) => setOutputLanguage(e.target.value)}
+        className="w-full bg-[#020617] border border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none text-gray-300 font-mono text-sm appearance-none cursor-pointer"
+      >
+        <option value="zh">中文</option>
+        <option value="en">English</option>
       </select>
     </div>
 
@@ -177,13 +200,17 @@ const ScheduleSettings = () => {
   useEffect(() => {
     const checkStatus = async () => {
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/workflow/runner/status`);
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
+            const res = await fetch(`${apiUrl}/api/v1/workflow/runner/status`);
             if (res.ok) {
                 const data = await res.json();
                 setIsRunning(data.is_running);
                 setStatus(data.is_running ? "RUNNING" : "STOPPED");
+            } else {
+                setStatus("ERROR");
             }
         } catch (e) {
+            console.error("Status check failed", e);
             setStatus("UNKNOWN");
         }
     };
@@ -194,7 +221,8 @@ const ScheduleSettings = () => {
 
   const handleStart = async () => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/workflow/run`, {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
+      const res = await fetch(`${apiUrl}/api/v1/workflow/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol: "BTC/USDT", session_id: "continuous-1" })
@@ -205,7 +233,8 @@ const ScheduleSettings = () => {
 
   const handleStop = async () => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/workflow/stop`, {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
+      const res = await fetch(`${apiUrl}/api/v1/workflow/stop`, {
         method: "POST"
       });
       if (res.ok) alert("Stopped Continuous Mode");
@@ -267,7 +296,7 @@ const NewsSettings = () => {
   const [twitterKey, setTwitterKey] = useState("");
   const [cryptoPanicToken, setCryptoPanicToken] = useState("");
   const [loading, setLoading] = useState(false);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
 
   useEffect(() => {
     const fetchConfigs = async () => {
@@ -354,7 +383,7 @@ const ApiSettings = () => {
   const [openaiKey, setOpenaiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
   const [loading, setLoading] = useState(false);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
 
   useEffect(() => {
     const fetchConfigs = async () => {

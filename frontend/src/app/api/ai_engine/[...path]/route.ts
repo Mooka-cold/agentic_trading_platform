@@ -41,21 +41,39 @@ async function proxy(req: NextRequest, params: { path: string[] }) {
 
     const response = await fetch(url, {
       method: req.method,
-      headers,
+      headers: {
+        ...Object.fromEntries(headers),
+        // Do NOT set Host header manually, node-fetch/next handles it
+      },
       body,
       cache: 'no-store',
+      // signal: req.signal // Optional: forward abort signal
     });
+    
+    // Handle upstream errors gracefully
+    if (!response.ok) {
+        console.error(`[Proxy] Upstream Error ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        return new NextResponse(errorText, {
+            status: response.status,
+            headers: {
+                'Content-Type': response.headers.get('Content-Type') || 'text/plain'
+            }
+        });
+    }
 
     // Handle SSE Streaming
     if (path.includes('stream/logs') || path.includes('stream/monitor')) {
-      console.log("[Proxy] Streaming SSE response...");
-      return new NextResponse(response.body, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-        },
-      });
+        console.log("[Proxy] Streaming SSE response...");
+        // Use global Response or NextResponse. 
+        // Important: iterator to stream
+        return new Response(response.body, {
+            headers: {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+            },
+        });
     }
 
     // Handle standard JSON/Text responses
@@ -74,8 +92,17 @@ async function proxy(req: NextRequest, params: { path: string[] }) {
       }
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Proxy] Error:', error);
+    
+    // Check for connection refused (backend down)
+    if (error.cause?.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
+        return NextResponse.json(
+          { error: 'AI Engine Unavailable', retry_after: 5 }, 
+          { status: 503, headers: { 'Retry-After': '5' } }
+        );
+    }
+
     return NextResponse.json(
       { error: 'Internal Proxy Error', details: String(error) }, 
       { status: 500 }

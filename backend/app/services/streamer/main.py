@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 from app.db.session import SessionLocalUser, SessionLocalMarket
-from app.models.market import MarketKline
+from shared.models.market import MarketKline
 from app.core.config import settings
 
 # Configuration
@@ -44,11 +44,26 @@ class MarketStreamer:
             session = self.market_db()
             try:
                 klines = session.execute(query).scalars().all()
+                if not klines:
+                    logger.warning("⚠️ No history found in DB. Streamer starting cold.")
+                    return
+                
+                # Check for gap
+                last_kline = klines[0] # desc order, so first is latest
+                now = datetime.now(timezone.utc)
+                diff = now - last_kline.time
+                
+                # If gap > 2 minutes (allow some latency), backfill
+                if diff.total_seconds() > 120:
+                    logger.warning(f"⚠️ Data gap detected: {diff}. Last DB time: {last_kline.time}. Backfilling...")
+                    await self.backfill_gap(last_kline.time)
+                    # Re-fetch after backfill
+                    klines = session.execute(query).scalars().all()
+                    
             finally:
                 session.close()
-            
+
             if not klines:
-                logger.warning("⚠️ No history found in DB. Streamer starting cold.")
                 return
 
             # Sort ascending for calculation
@@ -66,10 +81,66 @@ class MarketStreamer:
             self.df = pd.DataFrame(data)
             self.df.set_index('time', inplace=True)
             logger.info(f"✅ Warmup complete. Last candle: {self.df.index[-1]}")
-            
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
+            
+    async def backfill_gap(self, last_db_time: datetime):
+        """
+        Use CCXT to fetch missing candles between last_db_time and NOW.
+        Calculate indicators for them and save to DB.
+        """
+        import ccxt.async_support as ccxt
+        
+        exchange = ccxt.binance()
+        try:
+            # Calculate number of missing candles
+            now = datetime.now(timezone.utc)
+            # Binance limit is 1000
+            # Timeframe is 1m
+            since = int(last_db_time.timestamp() * 1000)
+            
+            logger.info(f"🔄 Backfilling from {last_db_time} via CCXT...")
+            
+            ohlcv = await exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, since=since, limit=1000)
+            
+            if not ohlcv:
+                logger.warning("Backfill returned no data.")
+                return
 
+            # Filter out already existing (first one usually overlaps)
+            new_candles = []
+            for candle in ohlcv:
+                ts = pd.to_datetime(candle[0], unit='ms', utc=True)
+                if ts > last_db_time:
+                    new_candles.append({
+                        'ts': candle[0],
+                        'o': candle[1],
+                        'h': candle[2],
+                        'l': candle[3],
+                        'c': candle[4],
+                        'vol': candle[5]
+                    })
+            
+            if not new_candles:
+                logger.info("No new candles to backfill.")
+                return
+
+            logger.info(f"📥 Found {len(new_candles)} missing candles. Processing...")
+            
+            # Process each candle sequentially to update DF and Indicators
+            for c in new_candles:
+                # Update DF and calculate indicators (this updates self.df state)
+                indicators = self.calculate_indicators(c)
+                # Save to DB
+                await self.save_to_db(c, indicators)
+                
+            logger.info("✅ Backfill complete.")
+            
+        except Exception as e:
+            logger.error(f"Backfill failed: {e}")
+        finally:
+            await exchange.close()
+            
     def calculate_indicators(self, new_candle: dict) -> dict:
         """
         Append new candle (or update current), calc indicators, return latest values

@@ -18,7 +18,7 @@ class MemoryService:
             self.client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
         except Exception as e:
             print(f"Warning: Could not connect to ChromaDB HTTP Client ({e}). Falling back to local/in-memory.")
-            self.client = chromadb.PersistentClient(path="./chroma_db")
+            self.client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIRECTORY)
 
         # Initialize Embedding Function
         # We use OpenAI Embeddings via LangChain adapter or raw

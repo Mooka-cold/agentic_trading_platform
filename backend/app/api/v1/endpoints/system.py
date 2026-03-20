@@ -4,7 +4,7 @@ from typing import List
 import httpx
 from app.core.config import settings
 from app.db.session import get_user_db
-from app.models.system import SystemConfig
+from shared.models.system import SystemConfig
 from app.schemas.system import SystemConfigCreate, SystemConfig as SystemConfigSchema
 
 router = APIRouter()
@@ -33,10 +33,10 @@ def set_config(config: SystemConfigCreate, db: Session = Depends(get_user_db)):
     db_config = db.query(SystemConfig).filter(SystemConfig.key == config.key).first()
     if db_config:
         db_config.value = config.value
-        if config.description:
+        if config.description is not None:
             db_config.description = config.description
     else:
-        db_config = SystemConfig(**config.model_dump())
+        db_config = SystemConfig(key=config.key, value=config.value, description=config.description)
         db.add(db_config)
     
     db.commit()

@@ -1,6 +1,6 @@
 import httpx
 from sqlalchemy.orm import Session
-from app.models.news import News
+from shared.models.news import News
 from app.core.config import settings
 from datetime import datetime
 
@@ -43,7 +43,7 @@ class NewsService:
             if domain_value:
                 params["domains"] = domain_value
             
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
                 resp = await client.get(self.api_url, params=params)
                 
                 if resp.status_code != 200:

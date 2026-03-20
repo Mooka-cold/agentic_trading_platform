@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from core.config import settings
 from core.prompt_loader import registry
 from langchain_core.output_parsers import JsonOutputParser
+from sqlalchemy import create_engine, text
 
 # Configure Redis for SSE streaming
 # Use settings from core.config which handles .env loading
@@ -21,6 +22,7 @@ class BaseAgent:
         self.name = name
         self.redis_client = redis.from_url(REDIS_URL, decode_responses=True)
         self.logger = logging.getLogger(f"agent.{agent_id}")
+        self.output_language = self._load_output_language()
         
         # Initialize LLM
         self.llm = ChatOpenAI(
@@ -117,11 +119,31 @@ class BaseAgent:
     async def close(self):
         await self.redis_client.close()
 
-    async def call_llm(self, prompt_vars: Dict[str, Any], output_model: type = None) -> Any:
+    def _load_output_language(self) -> str:
+        default_lang = "中文"
+        try:
+            user_engine = create_engine(settings.DATABASE_USER_URL)
+            with user_engine.connect() as conn:
+                result = conn.execute(text("SELECT value FROM system_configs WHERE key = :key"), {"key": "AGENT_OUTPUT_LANGUAGE"})
+                row = result.fetchone()
+                if row and row[0]:
+                    raw = str(row[0]).strip()
+                    lower = raw.lower()
+                    if lower in ["zh", "zh-cn", "cn", "chinese", "中文"]:
+                        return "中文"
+                    if lower in ["en", "en-us", "english", "英文"]:
+                        return "English"
+                    return raw
+        except Exception:
+            return default_lang
+        return default_lang
+
+    async def call_llm(self, prompt_vars: Dict[str, Any], output_model: type = None, prompt_name: str = None) -> Any:
         """
         Loads the agent's prompt, injects variables, and calls the LLM.
         """
-        prompt = registry.get_agent_prompt(self.agent_id)
+        target_prompt = prompt_name if prompt_name else self.agent_id
+        prompt = registry.get_agent_prompt(target_prompt)
         
         # Add format instructions if output model is provided
         parser = None
@@ -141,9 +163,9 @@ class BaseAgent:
             # But parser helps robust parsing.
             pass
         
-        # Merge vars
+        merged_vars = {**prompt_vars, "output_language": self.output_language}
         chain = prompt | self.llm
         if parser:
             chain = chain | parser
             
-        return await asyncio.wait_for(chain.ainvoke(prompt_vars), timeout=settings.LLM_TIMEOUT_SECONDS)
+        return await asyncio.wait_for(chain.ainvoke(merged_vars), timeout=settings.LLM_TIMEOUT_SECONDS)

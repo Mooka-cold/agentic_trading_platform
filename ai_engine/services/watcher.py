@@ -32,6 +32,11 @@ class WatcherService:
                     signals = data.get("signals")
                     
                     if symbol and signals:
+                        # Check if Continuous Mode is active
+                        if not self.workflow_engine.is_running:
+                            # logger.debug(f"Watcher ignored signal for {symbol} (Loop Stopped)")
+                            continue
+
                         logger.info(f"Watcher received signal for {symbol}: {signals}")
                         
                         # Trigger Workflow

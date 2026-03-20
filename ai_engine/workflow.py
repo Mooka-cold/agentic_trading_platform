@@ -2,7 +2,7 @@ import asyncio
 import httpx
 from typing import Dict, Any
 from model.state import AgentState, MarketData, StrategyProposal, RiskVerdict
-from agents.core import Analyst, Strategist, Reviewer, Reflector, SentimentAgent
+from agents import Analyst, Strategist, Reviewer, Reflector, SentimentAgent
 import redis.asyncio as redis
 import json
 import os
@@ -11,6 +11,8 @@ import uuid
 from core.config import settings
 
 from services.market_data import market_data_service
+from services.market_intel import market_intel_service
+from services.safety_guard import safety_guard_service
 from services.risk_checks import get_missing_proposal_fields
 
 from langgraph_workflow import create_trading_workflow
@@ -19,7 +21,20 @@ from langgraph_workflow import create_trading_workflow
 
 class WorkflowEngine:
     def __init__(self):
-        self.redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        # Retry Logic for Redis Connection
+        # This prevents startup crashes if Redis container is slower to start
+        import time
+        for attempt in range(5):
+            try:
+                self.redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+                # Ping check
+                # Note: async redis client is lazy, but we can't await in __init__.
+                # So we assume it's okay or handle connection error later.
+                break
+            except Exception as e:
+                print(f"Warning: Redis connection failed (Attempt {attempt+1}/5): {e}")
+                time.sleep(2)
+        
         self.backend_url = settings.BACKEND_URL
         
         # Continuous Mode State
@@ -35,14 +50,32 @@ class WorkflowEngine:
 
     def reload_agents(self):
         print("🔄 Reloading Agents with latest config...")
-        from agents.core import Analyst, Strategist, Reviewer, Reflector, SentimentAgent
+        from agents import Analyst, Strategist, Reviewer, Reflector, SentimentAgent
         
         self.analyst = Analyst()
         self.sentiment_agent = SentimentAgent()
         self.strategist = Strategist()
         self.reviewer = Reviewer()
-        self.reflector = Reflector()
+        self.reflector = Reflector(self.redis_client) # Pass redis_client here
         print("✅ Agents reloaded.")
+
+    async def _fetch_account_balance_with_retry(self, retries: int = 3, retry_delay: float = 1.0) -> float:
+        last_error = None
+        for attempt in range(retries):
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    res = await client.get(f"{self.backend_url}/api/v1/trade/paper/account")
+                if res.status_code != 200:
+                    raise RuntimeError(f"paper account api status={res.status_code}, body={res.text[:200]}")
+                payload = res.json() if isinstance(res.json(), dict) else {}
+                if "balance" not in payload:
+                    raise RuntimeError("paper account api missing balance field")
+                return float(payload["balance"])
+            except Exception as exc:
+                last_error = exc
+                if attempt < retries - 1:
+                    await asyncio.sleep(retry_delay * (attempt + 1))
+        raise RuntimeError(f"failed to fetch account balance after {retries} attempts: {last_error}")
 
     async def start_loop(self, symbol: str, session_id: str):
         """
@@ -204,16 +237,23 @@ class WorkflowEngine:
 
             try:
                 # 1. Initialize State
-                # Fetch Balance first
-                account_balance = 0.0
                 try:
-                    async with httpx.AsyncClient() as client:
-                        # Note: 'backend' service name
-                        res = await client.get(f"{self.backend_url}/api/v1/trade/balance?currency=USDT")
-                        if res.status_code == 200:
-                            account_balance = float(res.json().get("balance", 0.0))
+                    account_balance = await self._fetch_account_balance_with_retry(retries=3, retry_delay=1.0)
                 except Exception as e:
-                    print(f"Warning: Failed to fetch balance: {e}", flush=True)
+                    error_msg = str(e)
+                    print(f"[Workflow] 🚨 CRITICAL: Failed to fetch account balance: {error_msg}", flush=True)
+                    await self.analyst.emit_log(
+                        content=f"🚨 CRITICAL RISK: Balance service unavailable. {error_msg}",
+                        log_type="error",
+                        session_id=session_id,
+                        artifact={"reason": "balance_fetch_failed", "error": error_msg}
+                    )
+                    async with httpx.AsyncClient() as client:
+                        await client.patch(
+                            f"{self.backend_url}/api/v1/workflow/session/{session_id}",
+                            json={"status": "FAILED", "review_status": "REJECTED"}
+                        )
+                    return None
 
                 # --- 0. PRE-FLIGHT RISK CHECK ---
                 if account_balance <= 0:
@@ -256,19 +296,43 @@ class WorkflowEngine:
                     timeframe="1m",
                     price=market_snapshot["price"], 
                     volume=market_snapshot["volume"],
-                    indicators=market_snapshot["indicators"],
-                    news_sentiment=0.0 # Will be updated by Sentiment Agent
+                    indicators=market_snapshot["indicators"]
                 )
+
+                desired_notional = max(100.0, account_balance * 0.01)
+                unresolved_todos = []
+                ticker_depth = await market_intel_service.fetch_ticker_depth(symbol=symbol, levels=10)
+                kline_1m = await market_intel_service.fetch_klines(symbol=symbol, interval="1m", limit=180)
+                if not kline_1m:
+                    unresolved_todos.append(f"{symbol} 缺少可用的 1m K线数据，使用基础模式运行")
+                microstructure = market_intel_service.build_microstructure_snapshot(ticker_depth, desired_notional)
+                regime = market_intel_service.classify_regime(kline_1m)
+                portfolio_context = market_intel_service.build_portfolio_context(
+                    account_balance=account_balance,
+                    positions=positions,
+                    mark_price=market_data.price,
+                )
+                execution_constraints = market_intel_service.build_execution_constraints(regime=regime, micro=microstructure)
+                safety = safety_guard_service.evaluate(
+                    market_data={"price": market_data.price},
+                    micro=microstructure,
+                    portfolio=portfolio_context,
+                )
+                if not safety.get("allowed", True):
+                    unresolved_todos.append(f"触发保护机制: {safety.get('reason')}")
                 
                 state = AgentState(
                     session_id=session_id,
                     market_data=market_data,
                     account_balance=account_balance,
-                    positions=positions
+                    positions=positions,
+                    market_regime=regime,
+                    microstructure=microstructure,
+                    portfolio_context=portfolio_context,
+                    execution_constraints=execution_constraints,
+                    unresolved_todos=unresolved_todos
                 )
                 
-                # --- LOG INITIAL CONTEXT ---
-                # This helps debugging and historical review
                 await self.analyst.emit_log(
                     content=f"Workflow Initialized for {symbol}",
                     log_type="info",
@@ -276,67 +340,88 @@ class WorkflowEngine:
                     artifact={
                         "market_snapshot": market_data.dict(),
                         "balance": account_balance,
-                        "positions": positions
+                        "positions": positions,
+                        "market_regime": regime,
+                        "microstructure": microstructure,
+                        "portfolio_context": portfolio_context,
+                        "execution_constraints": execution_constraints,
+                        "safety_guard": safety,
+                        "unresolved_todos": unresolved_todos,
                     }
                 )
-                # ---------------------------
-
-            # --- 2. EXECUTE LANGGRAPH WORKFLOW ---
-            
-            # Prepare Inputs
-            graph_inputs = {
-                "agent_state": state,
-                "session_id": session_id,
-                "symbol": symbol,
-                "completed_analysis": 0
-            }
-            
-            config = {"configurable": {"thread_id": session_id}}
-            
-            print(f"--- Executing LangGraph Workflow for {session_id} ---", flush=True)
-            
-            final_state = None
-            try:
-                # Run the graph
-                async for event in self.graph_app.astream(graph_inputs, config):
-                    for node_name, output in event.items():
-                        print(f"[Graph] Finished Node: {node_name}", flush=True)
-                        # We can emit logs here if needed, but Agents already do it.
-                        if "agent_state" in output:
-                            final_state = output["agent_state"]
-            except Exception as e:
-                print(f"LangGraph Execution Failed: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                # Fallback to failing the session
-                raise e
-
-            if final_state:
-                state = final_state
-                
-            print("Workflow Completed.", flush=True)
-            
-            # Update Session Status to COMPLETED with Decision Info
-            try:
-                update_payload = {"status": "COMPLETED"}
-                
-                if state.strategy_proposal:
-                    update_payload["action"] = state.strategy_proposal.action
-                    if state.strategy_proposal.action == "HOLD":
-                        update_payload["review_status"] = "SKIPPED"
-                
-                if state.risk_verdict:
-                    update_payload["review_status"] = "APPROVED" if state.risk_verdict.approved else "REJECTED"
-
-                async with httpx.AsyncClient() as client:
-                    await client.patch(
-                        f"{self.backend_url}/api/v1/workflow/session/{session_id}",
-                        json=update_payload
+                if not safety.get("allowed", True):
+                    await self.analyst.emit_log(
+                        content=f"🚨 SAFETY_GUARD: {safety.get('reason')}. Session halted.",
+                        log_type="error",
+                        session_id=session_id,
+                        artifact=safety,
                     )
-            except Exception as e:
-                print(f"Warning: Failed to update session status: {e}", flush=True)
+                    # 业务级熔断(Kill Switch)不应算作系统运行失败(FAILED)
+                    # 它是系统在极高风险下主动做出的安全决策，相当于一个强制的 "HOLD"
+                    async with httpx.AsyncClient() as client:
+                        await client.patch(
+                            f"{self.backend_url}/api/v1/workflow/session/{session_id}",
+                            json={"status": "COMPLETED", "review_status": "REJECTED"},
+                        )
+                    return None
 
-            return state
+                graph_inputs = {
+                    "agent_state": state,
+                    "session_id": session_id,
+                    "symbol": symbol,
+                    "completed_analysis": 0
+                }
+                
+                config = {"configurable": {"thread_id": session_id}}
+                
+                print(f"--- Executing LangGraph Workflow for {session_id} ---", flush=True)
+                
+                final_state = None
+                try:
+                    # Run the graph
+                    async for event in self.graph_app.astream(graph_inputs, config):
+                        for node_name, output in event.items():
+                            print(f"[Graph] Finished Node: {node_name}", flush=True)
+                            # We can emit logs here if needed, but Agents already do it.
+                            if "agent_state" in output:
+                                final_state = output["agent_state"]
+                except Exception as e:
+                    print(f"LangGraph Execution Failed: {e}", flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    # Fallback to failing the session
+                    raise e
+
+                if final_state:
+                    state = final_state
+                    
+                print("Workflow Completed.", flush=True)
+                
+                # Update Session Status to COMPLETED with Decision Info
+                try:
+                    from datetime import datetime
+                    update_payload = {
+                        "status": "COMPLETED",
+                        "end_time": datetime.utcnow().isoformat()
+                    }
+                    
+                    if state.strategy_proposal:
+                        update_payload["action"] = state.strategy_proposal.action
+                        if state.strategy_proposal.action == "HOLD":
+                            update_payload["review_status"] = "SKIPPED"
+                        elif state.risk_verdict:
+                            update_payload["review_status"] = "APPROVED" if state.risk_verdict.approved else "REJECTED"
+
+
+                    async with httpx.AsyncClient() as client:
+                        await client.patch(
+                            f"{self.backend_url}/api/v1/workflow/session/{session_id}",
+                            json=update_payload
+                        )
+                except Exception as e:
+                    print(f"Warning: Failed to update session status: {e}", flush=True)
+
+                return state
             except Exception as e:
                 print(f"CRITICAL WORKFLOW ERROR: {e}", flush=True)
                 import traceback

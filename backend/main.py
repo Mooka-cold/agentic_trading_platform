@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -5,9 +7,9 @@ from app.api.v1 import router as api_router
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine_user
-from app.models.user import Base as UserBase
+from shared.db.base import Base as UserBase
 # Import models to register them
-from app.models import workflow
+from shared.models import workflow
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -15,7 +17,18 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine_user)
     UserBase.metadata.create_all(bind=engine_user)
     
+    # Start Price Streamer (WebSocket)
+    from app.services.price_streamer import price_streamer
+
+    symbols_raw = os.getenv("SCHEDULE_SYMBOLS", "BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT")
+    symbols = [item.strip() for item in symbols_raw.split(",") if item.strip()]
+    print(f"📡 Starting PriceStreamer for: {symbols}")
+    await price_streamer.start(symbols)
+    
     yield
+    
+    # Stop Price Streamer
+    await price_streamer.stop()
 
 def create_application() -> FastAPI:
     application = FastAPI(

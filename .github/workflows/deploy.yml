@@ -38,7 +38,8 @@ jobs:
       - name: Build and push Backend image
         uses: docker/build-push-action@v5
         with:
-          context: ./backend
+          context: .
+          file: backend/Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:latest
           cache-from: type=gha
@@ -48,7 +49,8 @@ jobs:
       - name: Build and push AI Engine image
         uses: docker/build-push-action@v5
         with:
-          context: ./ai_engine
+          context: .
+          file: ai_engine/Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-engine:latest
           cache-from: type=gha
@@ -58,9 +60,21 @@ jobs:
       - name: Build and push Scheduler image
         uses: docker/build-push-action@v5
         with:
-          context: ./scheduler
+          context: .
+          file: scheduler/Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/scheduler:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # --- Build & Push Crawler ---
+      - name: Build and push Crawler image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: crawler/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/crawler:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

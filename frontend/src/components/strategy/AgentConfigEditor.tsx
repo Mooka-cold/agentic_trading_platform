@@ -24,6 +24,7 @@ const AGENTS = [
 export const AgentConfigEditor = () => {
   const [selectedAgentId, setSelectedAgentId] = useState("analyst");
   const [configContent, setConfigContent] = useState("");
+  const [configKey, setConfigKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
@@ -39,10 +40,16 @@ export const AgentConfigEditor = () => {
     setLoading(true);
     try {
       const data = await PromptAPI.getConfig(agentId);
-      // The config object from backend has one key (e.g., "preferences")
-      // We want to show the value of that key as text
-      const values = Object.values(data.config);
-      setConfigContent(values.length > 0 ? String(values[0]) : "");
+      // Dynamically detect the config key
+      const keys = Object.keys(data.config);
+      if (keys.length > 0) {
+          const key = keys[0];
+          setConfigKey(key);
+          setConfigContent(String(data.config[key]));
+      } else {
+          setConfigKey("config");
+          setConfigContent("");
+      }
       setStatus("idle");
     } catch (err) {
       console.error(err);
@@ -57,23 +64,10 @@ export const AgentConfigEditor = () => {
     setSaving(true);
     setStatus("idle");
     try {
-      // We need to know the key name (e.g., preferences, strategy)
-      // For now, we infer it or hardcode mapping in frontend?
-      // Better: Backend should return the key name? Or we just assume single key config for now.
-      // Wait, backend update endpoint expects `config: Dict`.
-      // The current implementation in PromptLoader simply dumps the dict to yaml.
-      // So if we send `{ "preferences": "..." }`, it writes `preferences: ...`.
-      
-      // Let's use a mapping for keys to be safe and consistent with backend expectations
-      const keyMap: Record<string, string> = {
-        "analyst": "preferences",
-        "strategist": "strategy",
-        "reviewer": "risk_config",
-        "reflector": "learning_goals" // aligned with backend fix
-      };
-      
-      const key = keyMap[selectedAgentId];
-      await PromptAPI.updateConfig(selectedAgentId, { [key]: configContent });
+      if (!configKey) {
+          throw new Error("Configuration key not found");
+      }
+      await PromptAPI.updateConfig(selectedAgentId, { [configKey]: configContent });
       setStatus("success");
       setTimeout(() => setStatus("idle"), 3000);
     } catch (err) {

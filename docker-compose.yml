@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # User & Strategy Database (PostgreSQL)
   db-users:
@@ -50,14 +48,17 @@ services:
     restart: always
     ports:
       - "3204:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
     networks:
       - ai_trading_net
 
   # Backend API (FastAPI)
   backend:
     build: 
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "3201:8000"
     environment:
@@ -65,22 +66,25 @@ services:
       - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_URL=http://chromadb:8000
+      - AI_ENGINE_URL=http://ai-engine:8000
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
       - NEWS_API_KEY=${NEWS_API_KEY}
+      - PYTHONPATH=/app:/app/shared
     depends_on:
       - db-users
       - db-market
       - redis
     volumes:
       - ./backend:/app
+      - ./shared:/app/shared
     networks:
       - ai_trading_net
 
   # AI Engine (Strategy Worker)
   ai-engine:
     build:
-      context: ./ai_engine
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ai_engine/Dockerfile
     ports:
       - "3202:8000"
     environment:
@@ -89,41 +93,80 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
       - BACKEND_URL=http://backend:8000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+      - LLM_MODEL=qwen-plus
+      - PYTHONPATH=/app:/app/shared
     depends_on:
       - db-users
       - db-market
       - redis
     volumes:
       - ./ai_engine:/app
+      - ./shared:/app/shared
+    networks:
+      - ai_trading_net
+
+  crawler:
+    build:
+      context: .
+      dockerfile: crawler/Dockerfile
+    ports:
+      - "3207:8000"
+    environment:
+      - DATABASE_USER_URL=postgresql://user_admin:user_password@db-users:5432/ai_trading_users
+      - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
+      - REDIS_URL=redis://redis:6379/0
+      - NEWS_API_KEY=${NEWS_API_KEY}
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+      - PYTHONPATH=/app:/app/shared
+    depends_on:
+      - db-users
+      - db-market
+    volumes:
+      - ./crawler:/app
+      - ./shared:/app/shared
     networks:
       - ai_trading_net
 
   scheduler:
     build:
-      context: ./scheduler
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: scheduler/Dockerfile
     command: python main.py
     environment:
       - BACKEND_URL=http://backend:8000
       - AI_ENGINE_URL=http://ai-engine:8000
+      - CRAWLER_URL=http://crawler:8000
       - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+      - DATABASE_USER_URL=postgresql://user_admin:user_password@db-users:5432/ai_trading_users
+      - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app:/app/shared
     depends_on:
       - backend
       - ai-engine
+      - crawler
+    volumes:
+      - ./scheduler:/app
+      - ./shared:/app/shared
     networks:
       - ai_trading_net
 
   market-streamer:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     command: python -m app.services.streamer.main
     volumes:
       - ./backend:/app
+      - ./shared:/app/shared
     environment:
       - DATABASE_USER_URL=postgresql://user_admin:user_password@db-users:5432/ai_trading_users
       - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
       - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app:/app/shared
     depends_on:
       - db-market
       - redis
@@ -143,7 +186,14 @@ services:
       - /app/node_modules
       - /app/.next
     environment:
+      # Browser-side access (User's browser -> Backend Public URL)
+      # In local dev: http://localhost:3201
+      # In cloud: http://<PUBLIC_IP>:3201
       - NEXT_PUBLIC_API_URL=http://localhost:3201
+      
+      # Server-side access (Next.js Container -> AI Engine Container)
+      # Always use internal Docker DNS name
+      - AI_ENGINE_URL=http://ai-engine:8000
     networks:
       - ai_trading_net
 
@@ -155,3 +205,4 @@ volumes:
   postgres_user_data:
   timescale_market_data:
   chroma_data:
+  redis_data:

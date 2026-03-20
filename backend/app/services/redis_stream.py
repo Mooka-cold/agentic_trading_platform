@@ -31,6 +31,23 @@ class RedisStreamService:
             await pubsub.unsubscribe(channel)
             await pubsub.close()
 
+    async def set_cache(self, key: str, value: any, ttl: int = None):
+        """Cache data with optional TTL"""
+        try:
+            val = json.dumps(value)
+            await self.redis.set(key, val, ex=ttl)
+        except Exception as e:
+            logger.error(f"Redis Cache Set Error: {e}")
+
+    async def get_cache(self, key: str) -> any:
+        """Get cached data"""
+        try:
+            val = await self.redis.get(key)
+            return json.loads(val) if val else None
+        except Exception as e:
+            logger.error(f"Redis Cache Get Error: {e}")
+            return None
+
     async def close(self):
         await self.redis.close()
 

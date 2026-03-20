@@ -134,7 +134,9 @@ class MarketDataService:
                 "ema": {
                     "fast": float(last['EMA_7']),
                     "slow": float(last['EMA_25'])
-                }
+                },
+                # Fallback ATR using percent of price
+                "atr": float(last['close']) * 0.02 
             },
             "source": "calculated",
             "timestamp": last.name.timestamp() if hasattr(last.name, 'timestamp') else 0

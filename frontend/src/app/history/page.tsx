@@ -2,6 +2,7 @@
 
 import { SideNav } from "@/components/layout/SideNav";
 import { useEffect, useState } from "react";
+import { useSearchParams } from 'next/navigation';
 import { formatTime, formatDateTime } from "@/lib/utils";
 import { 
   History, 
@@ -17,6 +18,8 @@ import {
   Trash
 } from "lucide-react";
 
+import { KlineChart } from "@/components/ui/KlineChart";
+
 interface WorkflowSession {
   id: string;
   symbol?: string;
@@ -27,6 +30,7 @@ interface WorkflowSession {
   review_status?: string | null; // New field
   duration_seconds?: number;
   log_count?: number;
+  trade_plan?: any; // Add trade_plan
 }
 
 interface WorkflowLog {
@@ -52,13 +56,18 @@ const formatDuration = (seconds?: number) => {
 };
 
 export default function HistoryPage() {
+  const searchParams = useSearchParams();
+  const initialSessionId = searchParams.get('session_id') || "";
+  
   const [sessions, setSessions] = useState<WorkflowSession[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(initialSessionId || null);
   const [logs, setLogs] = useState<WorkflowLog[]>([]);
+  const [tradePlan, setTradePlan] = useState<any>(null); // New State
   const [loading, setLoading] = useState(false);
   const [filterSymbol, setFilterSymbol] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterAction, setFilterAction] = useState("");
+  const [filterSessionId, setFilterSessionId] = useState(initialSessionId); // New State for Session ID
   const [filterReviewStatus, setFilterReviewStatus] = useState(""); // New State
   const [filterProfit, setFilterProfit] = useState<boolean | null>(null);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) || null;
@@ -114,8 +123,9 @@ export default function HistoryPage() {
     const fetchSessions = async () => {
       try {
         const params = new URLSearchParams();
-        params.set("limit", "20");
+        params.set("limit", "1000"); // Increase limit to see older sessions
         if (filterSymbol.trim()) params.set("symbol", filterSymbol.trim());
+        if (filterSessionId.trim()) params.set("session_id", filterSessionId.trim()); // Param for Session ID
         if (filterStatus) params.set("status", filterStatus);
         if (filterAction) params.set("action", filterAction);
         if (filterReviewStatus) params.set("review_status", filterReviewStatus); // New Param
@@ -138,7 +148,7 @@ export default function HistoryPage() {
       }
     };
     fetchSessions();
-  }, [filterSymbol, filterStatus, filterAction, filterReviewStatus, filterProfit]);
+  }, [filterSymbol, filterSessionId, filterStatus, filterAction, filterReviewStatus, filterProfit]);
 
   // Fetch Logs for Selected Session
   useEffect(() => {
@@ -147,6 +157,7 @@ export default function HistoryPage() {
     const fetchLogs = async () => {
       setLoading(true);
       setLogs([]); // Clear logs before fetching
+      setTradePlan(null); // Clear trade plan
       try {
         const encodedId = encodeURIComponent(selectedSessionId);
         const res = await fetch(`${API_URL}/api/v1/workflow/session/${encodedId}`);
@@ -157,6 +168,7 @@ export default function HistoryPage() {
             setSessions(prev => prev.map(s => s.id === session.id ? { ...s, symbol: session.symbol } : s));
           }
           setLogs(Array.isArray(session?.logs) ? session.logs : []);
+          setTradePlan(session?.trade_plan || null);
         } else {
             console.warn(`Failed to fetch logs for ${selectedSessionId}: ${res.status}`);
         }
@@ -203,6 +215,12 @@ export default function HistoryPage() {
                 value={filterSymbol}
                 onChange={(e) => setFilterSymbol(e.target.value)}
                 placeholder="Symbol: BTC/USDT"
+                className="w-full bg-[#020617] border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-blue-500"
+              />
+              <input
+                value={filterSessionId}
+                onChange={(e) => setFilterSessionId(e.target.value)}
+                placeholder="Session ID (Partial/Full)"
                 className="w-full bg-[#020617] border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-blue-500"
               />
               <div className="grid grid-cols-2 gap-2">
@@ -327,6 +345,22 @@ export default function HistoryPage() {
                   </div>
                 </div>
 
+                {/* Visualize Trade Plan */}
+                {tradePlan && (
+                  <div className="mb-8 p-4 bg-slate-900 rounded-xl border border-slate-800">
+                    <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+                      <Activity size={16} /> Strategy Visualization
+                    </h3>
+                    <div className="h-[300px] w-full relative">
+                        {/* We need historical data to render chart. 
+                            For now, we can try to find market data in logs or just show the plan levels if no chart data.
+                            Actually, we can try to find the 'market_data' artifact from the first log.
+                        */}
+                        <TradePlanChart logs={logs} tradePlan={tradePlan} />
+                    </div>
+                  </div>
+                )}
+
                 {/* Group logs by Agent to show flow */}
                 <ChainView logs={logs} />
               </div>
@@ -337,6 +371,68 @@ export default function HistoryPage() {
     </div>
   );
 }
+
+const TradePlanChart = ({ logs, tradePlan }: { logs: WorkflowLog[], tradePlan: any }) => {
+    const stopLossValue = tradePlan?.stop_loss ?? tradePlan?.sl;
+    const takeProfitValue = tradePlan?.take_profit ?? tradePlan?.tp;
+    // 1. Try to find market data history from Analyst or Market Data logs
+    // We look for 'market_data' artifact which usually contains current price.
+    // Ideally, we need a kline history.
+    // If not available, we can't render a chart.
+    // BUT, we can render a simple "Levels" view.
+    
+    // For now, let's see if we can find 'kline' data in artifacts.
+    // Our current backend doesn't save full kline history in logs to save space.
+    // So we might only have the snapshot.
+    
+    // Fallback: Just display the levels textually if no chart data.
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 bg-slate-800 rounded-lg border border-slate-700">
+                <span className="text-xs text-slate-500 block mb-1">Action</span>
+                <span className={`text-xl font-bold ${tradePlan.action === 'BUY' || tradePlan.action === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                    {tradePlan.action}
+                </span>
+            </div>
+            <div className="p-4 bg-slate-800 rounded-lg border border-slate-700">
+                <span className="text-xs text-slate-500 block mb-1">Entry Price</span>
+                <span className="text-xl font-bold text-blue-300">
+                    {tradePlan.entry_price ? `$${tradePlan.entry_price}` : 'MARKET'}
+                </span>
+            </div>
+            <div className="p-4 bg-slate-800 rounded-lg border border-slate-700">
+                 <div className="flex justify-between">
+                    <div>
+                        <span className="text-xs text-slate-500 block mb-1">Stop Loss</span>
+                        <span className="text-lg font-bold text-red-400">
+                            {stopLossValue != null ? `$${stopLossValue}` : '-'}
+                        </span>
+                    </div>
+                    <div className="text-right">
+                        <span className="text-xs text-slate-500 block mb-1">Take Profit</span>
+                        <span className="text-lg font-bold text-green-400">
+                            {takeProfitValue != null ? `$${takeProfitValue}` : '-'}
+                        </span>
+                    </div>
+                 </div>
+            </div>
+            
+            {/* Self Check Visualization */}
+            {tradePlan.self_check && (
+                <div className="col-span-1 md:col-span-3 p-3 bg-slate-800/50 rounded border border-dashed border-slate-600 flex gap-6 items-center">
+                    <span className="text-xs font-bold text-slate-400 uppercase">Risk Self-Check</span>
+                    <div className="flex gap-4 text-xs">
+                        <span>ATR: <span className="text-slate-300">{tradePlan.self_check.atr_value?.toFixed(2)}</span></span>
+                        <span>SL Dist: <span className="text-slate-300">{tradePlan.self_check.sl_distance?.toFixed(2)}</span></span>
+                        <span className={tradePlan.self_check.is_sl_valid ? "text-green-500" : "text-red-500"}>
+                            {tradePlan.self_check.is_sl_valid ? "✓ Valid Width" : "⚠ Too Tight"}
+                        </span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 const ChainView = ({ logs }: { logs: WorkflowLog[] }) => {
   // Simple grouping logic: Sequential flow
@@ -488,6 +584,7 @@ const getAgentColor = (id: string) => {
     case 'strategist': return 'border-purple-500';
     case 'reviewer': return 'border-red-500';
     case 'executor': return 'border-green-500';
+    case 'reflector': return 'border-yellow-500';
     default: return 'border-slate-500';
   }
 };
@@ -507,6 +604,7 @@ const AgentBadge = ({ id }: { id: string }) => {
     strategist: { color: 'text-purple-400', bg: 'bg-purple-900/20', icon: <Cpu size={14} />, label: 'The Strategist' },
     reviewer: { color: 'text-red-400', bg: 'bg-red-900/20', icon: <Database size={14} />, label: 'The Reviewer' },
     executor: { color: 'text-green-400', bg: 'bg-green-900/20', icon: <ArrowRight size={14} />, label: 'Executor' },
+    reflector: { color: 'text-yellow-400', bg: 'bg-yellow-900/20', icon: <History size={14} />, label: 'The Reflector' },
   };
 
   const c = config[id] || { color: 'text-slate-400', bg: 'bg-slate-800', icon: <Cpu size={14} />, label: id };

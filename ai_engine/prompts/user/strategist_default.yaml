@@ -1,9 +1,0 @@
-strategy: |
-  # Trading Style
-  - Type: Trend Following (Breakout)
-  - Risk Appetite: Medium (Reward/Risk > 2:1)
-  
-  # Indicators Focus
-  - RSI (14): Use for overbought/oversold confirmation.
-  - MACD: Use for momentum validation.
-  - Volume: Must confirm price movement.

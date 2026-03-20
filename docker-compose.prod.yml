@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # --- Databases ---
   db-users:
@@ -91,6 +89,25 @@ services:
     networks:
       - ai_trading_net
 
+  crawler:
+    image: ${IMAGE_PREFIX}/crawler:latest
+    container_name: ai_trading-crawler
+    restart: always
+    ports:
+      - "3207:8000"
+    environment:
+      - DATABASE_USER_URL=postgresql://user_admin:${POSTGRES_USER_PASSWORD:-user_password}@db-users:5432/ai_trading_users
+      - DATABASE_MARKET_URL=postgresql://market_admin:${POSTGRES_MARKET_PASSWORD:-market_password}@db-market:5432/ai_trading_market
+      - REDIS_URL=redis://redis:6379/0
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - NEWS_API_KEY=${NEWS_API_KEY}
+      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+    depends_on:
+      - db-users
+      - db-market
+    networks:
+      - ai_trading_net
+
   scheduler:
     image: ${IMAGE_PREFIX}/scheduler:latest
     container_name: ai_trading-scheduler
@@ -99,10 +116,12 @@ services:
     environment:
       - BACKEND_URL=http://backend:8000
       - AI_ENGINE_URL=http://ai-engine:8000
+      - CRAWLER_URL=http://crawler:8000
       - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
     depends_on:
       - backend
       - ai-engine
+      - crawler
     networks:
       - ai_trading_net
 

@@ -3,6 +3,8 @@ input_variables:
   - user_learning_goals
   - trade_log
   - market_context
+  - post_exit_market_action
+  - output_language
 template: |
   # System Role
   You are a Trading Performance Coach. Your job is to extract lessons from trade outcomes to improve future performance.
@@ -19,6 +21,9 @@ template: |
   
   ## 3. Post-Exit Market Action (T+1 Hindsight)
   {post_exit_market_action}
+
+  # Output Language
+  Output all text fields in {output_language}.
 
   # Output Format (Strict JSON)
   {{

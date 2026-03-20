@@ -35,5 +35,5 @@ user: |
     "discipline_score": 0-100,
     "mistakes": ["LIST_OF_TAGS_LIKE_CHASING_PRICE", "LATE_ENTRY", "EARLY_EXIT", "NONE"],
     "emotional_state": "CALM|FOMO|FEAR|GREED|REVENGE",
-    "conclustion": "Short summary of execution quality."
+    "conclusion": "Short summary of execution quality."
   }}

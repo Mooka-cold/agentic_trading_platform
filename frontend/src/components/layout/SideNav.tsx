@@ -8,7 +8,8 @@ import {
   Settings, 
   User, 
   LogOut, 
-  Cpu
+  Cpu,
+  Database
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -27,6 +28,7 @@ export const SideNav = () => {
         <NavItem href="/" icon={<LayoutDashboard size={20} />} active={pathname === '/'} label="Dashboard" />
         <NavItem href="/agents" icon={<Cpu size={20} />} active={pathname === '/agents'} label="Agents Swarm" />
         <NavItem href="/history" icon={<History size={20} />} active={pathname === '/history'} label="History" />
+        <NavItem href="/data-sources" icon={<Database size={20} />} active={pathname === '/data-sources'} label="Data Sources" />
         
         <div className="w-8 h-px bg-slate-800 my-2"></div>
         

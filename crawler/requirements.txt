@@ -1,0 +1,11 @@
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+sqlalchemy>=2.0.25
+psycopg2-binary>=2.9.9
+pydantic-settings>=2.1.0
+httpx>=0.26.0
+feedparser>=6.0.11
+ccxt>=4.2.19
+pandas>=2.2.0
+yfinance>=0.2.66
+requests>=2.32.0

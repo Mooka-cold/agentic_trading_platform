@@ -2,12 +2,12 @@ from fastapi import APIRouter, Body
 from pydantic import BaseModel
 from typing import List, Optional
 import asyncio
+import httpx
 
-from app.services.crawler.market import MarketCrawler
-from app.services.crawler.news import NewsCrawler
 from app.services.ai_client import run_analysis_cycle
 from app.services.monitor import PositionMonitorService
 from app.db.session import SessionLocalUser
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -27,18 +27,19 @@ class MarketBackfillRequest(BaseModel):
 async def sync_market(req: MarketSyncRequest):
     symbols = req.symbols or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
     timeframes = req.timeframes or ["1m"]
-    crawler = MarketCrawler()
-    try:
-        await crawler.sync_market_data(symbols, timeframes)
-    finally:
-        await crawler.close()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            f"{settings.CRAWLER_URL}/api/v1/sync/market",
+            json={"symbols": symbols, "timeframes": timeframes},
+        )
+        response.raise_for_status()
     return {"status": "success", "symbols": symbols, "timeframes": timeframes}
 
 @router.post("/sync-news")
 async def sync_news():
-    crawler = NewsCrawler()
-    await crawler.sync_news()
-    crawler.close()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(f"{settings.CRAWLER_URL}/api/v1/sync/news")
+        response.raise_for_status()
     return {"status": "success"}
 
 @router.post("/analyze")
@@ -49,11 +50,13 @@ async def analyze(req: AnalyzeRequest | None = Body(default=None)):
 
 @router.post("/backfill-market")
 async def backfill_market(req: MarketBackfillRequest):
-    crawler = MarketCrawler()
-    try:
-        total = await crawler.backfill_ohlcv(req.symbol, req.timeframe, req.hours)
-    finally:
-        await crawler.close()
+    async with httpx.AsyncClient(timeout=40.0) as client:
+        response = await client.post(
+            f"{settings.CRAWLER_URL}/api/v1/sync/backfill",
+            json=req.model_dump(),
+        )
+        response.raise_for_status()
+        total = (response.json() or {}).get("inserted", 0)
     return {"status": "success", "symbol": req.symbol, "timeframe": req.timeframe, "hours": req.hours, "inserted": total}
 
 def _run_monitor_sync():

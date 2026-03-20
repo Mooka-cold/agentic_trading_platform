@@ -1,12 +1,135 @@
-from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Any, List, Optional, Dict
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from app.db.session import get_market_db
+from app.db.session import get_user_db, get_market_db
+from app.services.macro_data import MacroDataService
+from app.services.onchain_data import OnChainDataService
 from datetime import datetime, timedelta
 import pandas as pd
 
 router = APIRouter()
+
+@router.get("/ticker")
+async def get_market_ticker(
+    symbol: str = Query(..., description="Trading pair, e.g. BTC/USDT"),
+    levels: int = Query(default=5, ge=1, le=20, description="Order book levels to return")
+) -> Any:
+    """
+    Get real-time ticker and depth summary from Redis cache.
+    Extremely fast endpoint for dashboard updates.
+    """
+    from app.services.redis_stream import redis_stream
+    
+    ticker_key = f"market:ticker:{symbol}"
+    depth_key = f"market:orderbook:{symbol}"
+    
+    ticker_data = await redis_stream.get_cache(ticker_key)
+    depth_data = await redis_stream.get_cache(depth_key)
+    
+    if not ticker_data:
+        return {"symbol": symbol, "price": 0, "status": "connecting"}
+        
+    price = float(ticker_data.get('last', 0))
+    change_24h = float(ticker_data.get('percentage', 0))
+    
+    bid_price = 0
+    bid_qty = 0
+    ask_price = 0
+    ask_qty = 0
+    bids_top: List[List[float]] = []
+    asks_top: List[List[float]] = []
+    bid_depth_qty = 0.0
+    ask_depth_qty = 0.0
+    bid_depth_notional = 0.0
+    ask_depth_notional = 0.0
+    
+    if depth_data:
+        bids = depth_data.get('bids', [])
+        asks = depth_data.get('asks', [])
+        if bids:
+            bid_price = float(bids[0][0])
+            bid_qty = float(bids[0][1])
+            bids_top = [[float(x[0]), float(x[1])] for x in bids[:levels]]
+            bid_depth_qty = sum(float(x[1]) for x in bids_top)
+            bid_depth_notional = sum(float(x[0]) * float(x[1]) for x in bids_top)
+        if asks:
+            ask_price = float(asks[0][0])
+            ask_qty = float(asks[0][1])
+            asks_top = [[float(x[0]), float(x[1])] for x in asks[:levels]]
+            ask_depth_qty = sum(float(x[1]) for x in asks_top)
+            ask_depth_notional = sum(float(x[0]) * float(x[1]) for x in asks_top)
+    spread = abs(ask_price - bid_price) if ask_price > 0 and bid_price > 0 else 0.0
+    spread_pct = (spread / price) * 100 if price > 0 else 0.0
+    total_depth_notional = bid_depth_notional + ask_depth_notional
+    imbalance = ((bid_depth_notional - ask_depth_notional) / total_depth_notional) if total_depth_notional > 0 else 0.0
+            
+    return {
+        "symbol": symbol,
+        "price": price,
+        "change24h": change_24h,
+        "bid": bid_price,
+        "bid_qty": bid_qty,
+        "ask": ask_price,
+        "ask_qty": ask_qty,
+        "timestamp": ticker_data.get('timestamp'),
+        "levels": levels,
+        "bids": bids_top,
+        "asks": asks_top,
+        "spread": spread,
+        "spread_pct": spread_pct,
+        "bid_depth_qty": bid_depth_qty,
+        "ask_depth_qty": ask_depth_qty,
+        "bid_depth_notional": bid_depth_notional,
+        "ask_depth_notional": ask_depth_notional,
+        "depth_imbalance": imbalance
+    }
+
+@router.get("/seconds")
+def get_second_series(
+    symbol: str = Query(..., description="Trading pair, e.g. BTC/USDT"),
+    window: int = Query(600, ge=60, le=600)
+) -> Dict[str, Any]:
+    from app.services.price_streamer import price_streamer
+    points = price_streamer.get_recent_seconds(symbol, window)
+    return {
+        "symbol": symbol,
+        "window": window,
+        "points": points
+    }
+
+@router.get("/macro")
+def get_macro_metrics(
+    db: Session = Depends(get_user_db)
+) -> Dict[str, Any]:
+    """
+    Get latest macro economic metrics.
+    """
+    service = MacroDataService(db)
+    return service.get_latest_snapshot()
+
+@router.get("/onchain/{symbol}")
+def get_onchain_metrics(
+    symbol: str,
+    db: Session = Depends(get_user_db)
+) -> Dict[str, Any]:
+    """
+    Get latest on-chain metrics for a symbol.
+    """
+    service = OnChainDataService(db)
+    return service.get_latest_snapshot(symbol)
+
+@router.post("/macro/update")
+def trigger_macro_update(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_user_db)
+):
+    """
+    Trigger an async update of macro data (Crawler).
+    """
+    service = MacroDataService(db)
+    background_tasks.add_task(service.fetch_and_store_all)
+    return {"status": "update_triggered"}
 
 @router.get("/kline")
 def get_kline_data(
@@ -19,13 +142,6 @@ def get_kline_data(
     Get historical K-line data with indicators directly from DB.
     """
     # Select all indicators stored by Streamer
-    # Note: DB column names match the model (rsi_14, sma_7, etc.)
-    # We alias them to match frontend expectations if needed, 
-    # but frontend seems to map them manually or use same names.
-    # Let's check frontend mapping:
-    # rsi -> rsi_14 (frontend uses latest.rsi ?? null)
-    # Actually frontend checks `latest.rsi` but Streamer saves `rsi_14`.
-    # Let's return both or alias it to be safe.
     
     query = text("""
         SELECT 
@@ -48,13 +164,14 @@ def get_kline_data(
         return []
 
     data = []
+
+    # Helper to safely get float or None
+    def safe_val(val):
+        return float(val) if val is not None else None
+
     # Reverse to return chronological order (oldest first) as chart libraries usually expect
     for row in reversed(result):
         ts = int(row.time.timestamp())
-        
-        # Helper to safely get float or None
-        def safe_val(val):
-            return float(val) if val is not None else None
 
         item = {
             "time": ts,
@@ -71,17 +188,6 @@ def get_kline_data(
             "macd_hist": safe_val(row.macd_hist),
             
             # MA20/MA50 are not explicitly in DB (streamer calcs BB_Middle which is SMA20)
-            # We can map bb_middle to ma20 if needed, or just return what we have.
-            # Frontend asks for ma20, ma50. Streamer saves bb_middle (SMA20).
-            # Let's map ma20 = bb_middle. ma50 might be missing in DB if streamer doesn't save it.
-            # Streamer saves: rsi_14, macd*, bb*, atr_14, sma_7, ema_25.
-            # Wait, Streamer saves `ema_25` but frontend asks for `ema_7` and `ema_25`.
-            # Let's check Streamer save_to_db again.
-            # Streamer saves: rsi_14, macd, macd_signal, macd_hist, bb_upper, bb_middle, bb_lower, atr_14, sma_7, ema_25.
-            # It seems Streamer DOES NOT save ma50, ema_7, sma_25.
-            # So for those missing ones, we might still return None or need to add them to DB schema later.
-            # For now, return what we have in DB.
-            
             "ma20": safe_val(row.bb_middle), # BB Middle is SMA 20
             "ma50": None, # Not in DB
             

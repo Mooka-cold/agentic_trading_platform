@@ -40,6 +40,14 @@ class CCXTConnector(DataSourceAdapter):
         self.exchange = exchange_class(self.config)
         self.subscribed_symbols = []
 
+    async def fetch_ticker(self, symbol: str):
+        """Fetch current ticker price"""
+        return await self.exchange.fetch_ticker(symbol)
+
+    async def fetch_order_book(self, symbol: str, limit: int = 20):
+        """Fetch current order book depth"""
+        return await self.exchange.fetch_order_book(symbol, limit)
+
     async def connect(self):
         # CCXT Pro connects lazily on watch_*, but we can verify here
         if self.exchange.has['watchTicker']:

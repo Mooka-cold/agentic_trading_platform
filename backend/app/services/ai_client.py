@@ -1,7 +1,7 @@
 import httpx
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocalUser
-from app.models.signal import Signal
+from shared.models.signal import Signal
 
 from app.core.config import settings
 
