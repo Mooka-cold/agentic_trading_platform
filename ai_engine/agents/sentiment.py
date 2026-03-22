@@ -105,7 +105,13 @@ class SentimentAgent(BaseAgent):
         return stats
 
     async def run_news_interpreter_cycle(self, symbol: str = "BTC/USDT", claim_limit: int = 200, concurrency: int = 20) -> dict:
-        news = await sentiment_service.get_latest_news(symbol, limit=800, trigger_fetch=False)
+        window_hours = int(getattr(sentiment_service, "news_window_hours", 6) or 6)
+        news = await sentiment_service.get_latest_news(
+            symbol,
+            limit=800,
+            trigger_fetch=False,
+            within_hours=window_hours
+        )
         queued = sentiment_service.queue_recent_news_for_interpretation(news)
         pending = sentiment_service.claim_pending_interpretations(limit=claim_limit)
         if not pending:
@@ -128,19 +134,29 @@ class SentimentAgent(BaseAgent):
         from services.market_data import market_data_service
         session_id = state.session_id
         symbol = state.market_data.symbol
+        sentiment_window_hours = int(getattr(sentiment_service, "news_window_hours", 6) or 6)
         
         await self.think(f"Scanning news & social sentiment for {symbol}...", session_id)
         
         # 1. Fetch Data
         try:
             fng = await sentiment_service.get_fear_greed_index()
-            news = await sentiment_service.get_latest_news(symbol, limit=600, trigger_fetch=False)
+            news = await sentiment_service.get_latest_news(
+                symbol,
+                limit=600,
+                trigger_fetch=False,
+                within_hours=sentiment_window_hours
+            )
             sentiment_service.queue_recent_news_for_interpretation(news)
             pending = sentiment_service.claim_pending_interpretations(limit=200)
             batch_stats = {"success": 0, "failed": 0}
             if pending:
                 batch_stats = await self._run_interpreter_batch(pending, concurrency=20)
-            aggregate = sentiment_service.aggregate_interpreted_news(symbol, fng)
+            aggregate = sentiment_service.aggregate_interpreted_news(
+                symbol,
+                fng,
+                lookback_hours=sentiment_window_hours
+            )
             rule_packet = sentiment_service.build_rule_packet(news[:100], fng)
             
             fear_greed_str = f"Index: {fng['value']} ({fng['classification']})"
@@ -210,6 +226,7 @@ class SentimentAgent(BaseAgent):
                     "trigger_reason": aggregate.get("trigger_reason"),
                     "urgent_event": aggregate.get("urgent_event", False),
                     "trade_gate": aggregate.get("trade_gate", "normal"),
+                    "sentiment_window_hours": sentiment_window_hours,
                     "news_analysis": news # Pass full news objects for frontend display
                 }
             )
@@ -218,4 +235,3 @@ class SentimentAgent(BaseAgent):
         except Exception as e:
             await self.think(f"Sentiment analysis failed: {e}", session_id)
             return {}
-

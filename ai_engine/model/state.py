@@ -141,8 +141,13 @@ class AgentState(BaseModel):
     analyst_report: Optional[AnalystOutput] = None
     sentiment_report: Optional[SentimentOutput] = None
     macro_report: Optional[MacroOutput] = None
-    onchain_report: Optional[OnChainOutput] = None # <--- New Field
-    strategy_proposal: Optional[StrategyProposal] = None
+    onchain_report: Optional[OnChainOutput] = None
+    
+    # Phase 4: Multi-Agent Debate
+    bull_proposal: Optional[StrategyProposal] = None
+    bear_proposal: Optional[StrategyProposal] = None
+    
+    strategy_proposal: Optional[StrategyProposal] = None # The final chosen proposal by PM
     risk_verdict: Optional[RiskVerdict] = None
     review_feedback: Optional[Dict[str, Any]] = None
     analyst_feedback: Optional[str] = None # Strategist's question to Analyst

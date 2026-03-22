@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from core.config import settings
 from core.prompt_loader import registry
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.messages import SystemMessage
 from sqlalchemy import create_engine, text
 
 # Configure Redis for SSE streaming
@@ -149,23 +150,17 @@ class BaseAgent:
         parser = None
         if output_model:
             parser = JsonOutputParser(pydantic_object=output_model)
-            # Check if prompt has {format_instructions}, if not, we might append it?
-            # LangChain prompts usually need explicit placeholder. 
-            # My system prompts (from Step 1) don't have {format_instructions} placeholder explicitly,
-            # but they say "Output Format (Strict JSON)".
-            # If I use JsonOutputParser, it generates a schema string.
-            # I should inject it.
-            # Let's assume my yaml templates handle it or I inject it as a partial if needed.
-            # Actually, `JsonOutputParser.get_format_instructions()` returns a string.
-            # My prompts currently don't use {format_instructions} variable.
-            # I should update my prompts or just rely on the text description I wrote in YAML.
-            # Since I wrote explicit JSON example in YAML, maybe I don't need parser instructions?
-            # But parser helps robust parsing.
-            pass
         
         merged_vars = {**prompt_vars, "output_language": self.output_language}
-        chain = prompt | self.llm
+        prompt_value = await prompt.ainvoke(merged_vars)
+        messages = list(prompt_value.to_messages())
+        language_guardrail = (
+            f"Language requirement: all explanatory and narrative text must be in {self.output_language}. "
+            "Keep JSON field names and enum tokens in English unless prompt explicitly requires otherwise."
+        )
+        messages.insert(0, SystemMessage(content=language_guardrail))
+        response = await asyncio.wait_for(self.llm.ainvoke(messages), timeout=settings.LLM_TIMEOUT_SECONDS)
         if parser:
-            chain = chain | parser
-            
-        return await asyncio.wait_for(chain.ainvoke(merged_vars), timeout=settings.LLM_TIMEOUT_SECONDS)
+            content = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
+            return parser.parse(content)
+        return response

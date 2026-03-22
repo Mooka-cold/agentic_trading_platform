@@ -50,11 +50,16 @@ class WorkflowEngine:
 
     def reload_agents(self):
         print("🔄 Reloading Agents with latest config...")
-        from agents import Analyst, Strategist, Reviewer, Reflector, SentimentAgent
+        from agents import Analyst, Reviewer, Reflector, SentimentAgent
+        from agents.bull_strategist import BullStrategist
+        from agents.bear_strategist import BearStrategist
+        from agents.portfolio_manager import PortfolioManager
         
         self.analyst = Analyst()
         self.sentiment_agent = SentimentAgent()
-        self.strategist = Strategist()
+        self.bull_strategist = BullStrategist()
+        self.bear_strategist = BearStrategist()
+        self.portfolio_manager = PortfolioManager()
         self.reviewer = Reviewer()
         self.reflector = Reflector(self.redis_client) # Pass redis_client here
         print("✅ Agents reloaded.")

@@ -136,9 +136,6 @@ class Reflector(BaseAgent):
             if not prompt_def:
                 return
             
-            # Construct Prompt
-            prompt_template = prompt_def.get("template", "")
-            
             # We need context: Was this a forced exit? Or TP/SL?
             # session_id usually has info like "guardian-stop_loss"
             exit_reason = "MANUAL_CLOSE"
@@ -151,19 +148,37 @@ class Reflector(BaseAgent):
             
             pnl = exec_result.get("pnl", 0.0)
             
-            context_str = (
-                f"Order ID: {order_id}\n"
-                f"Exit Reason: {exit_reason}\n"
-                f"PnL: {pnl:.2f}\n"
-                f"Session ID: {session_id}"
-            )
-            
             # 2. Call LLM
             from langchain_core.messages import SystemMessage, HumanMessage
+            system_msg = str(prompt_def.get("system", "You are a disciplined Trading Coach conducting an IMMEDIATE POST-MORTEM (T+0)."))
+            user_tpl = str(prompt_def.get("user", ""))
+            prompt_vars = {
+                "symbol": str(exec_result.get("symbol", "BTC/USDT")),
+                "side": str(exec_result.get("side", "UNKNOWN")),
+                "entry_price": exec_result.get("entry_price", 0.0),
+                "exit_price": exec_result.get("exit_price", 0.0),
+                "pnl": f"{float(pnl):.2f}",
+                "r_multiple": exec_result.get("r_multiple", 0.0),
+                "setup_name": str(exec_result.get("setup_name", "UNKNOWN")),
+                "market_regime": str(exec_result.get("market_regime", "UNKNOWN")),
+                "planned_sl": exec_result.get("planned_sl", "N/A"),
+                "actual_sl": exec_result.get("actual_sl", "N/A"),
+                "planned_tp": exec_result.get("planned_tp", "N/A"),
+                "actual_tp": exec_result.get("actual_tp", "N/A")
+            }
+            try:
+                user_msg = user_tpl.format(**prompt_vars)
+            except Exception:
+                user_msg = (
+                    f"Order ID: {order_id}\n"
+                    f"Exit Reason: {exit_reason}\n"
+                    f"PnL: {pnl:.2f}\n"
+                    f"Session ID: {session_id}"
+                )
             
             messages = [
-                SystemMessage(content="You are a Trading Psychologist conducting a post-mortem."),
-                HumanMessage(content=prompt_template.replace("{execution_data}", context_str).replace("{output_language}", "English"))
+                SystemMessage(content=f"{system_msg}\nAll explanatory text must be in {self.output_language}. Keep JSON keys in English."),
+                HumanMessage(content=user_msg)
             ]
             
             result = await self.llm.ainvoke(messages)
@@ -342,7 +357,7 @@ class Reflector(BaseAgent):
                                 
                                 from langchain_core.messages import SystemMessage, HumanMessage
                                 messages = [
-                                    SystemMessage(content=system_msg),
+                                    SystemMessage(content=f"{system_msg}\nAll explanatory text must be in {self.output_language}. Keep JSON keys in English."),
                                     HumanMessage(content=user_msg)
                                 ]
                                 
@@ -415,4 +430,3 @@ class Reflector(BaseAgent):
             print(f"[Reflector] Periodic review loop failed: {e}", flush=True)
             import traceback
             traceback.print_exc()
-

@@ -4,7 +4,10 @@ from typing import Annotated, Any, Dict, List, TypedDict, Union, Literal
 
 from langgraph.graph import StateGraph, END, START
 from model.state import AgentState, AnalystOutput, SentimentOutput, MacroOutput, OnChainOutput
-from agents import Analyst, Strategist, Reviewer, Reflector, SentimentAgent
+from agents import Analyst, Reviewer, Reflector, SentimentAgent
+from agents.bull_strategist import BullStrategist
+from agents.bear_strategist import BearStrategist
+from agents.portfolio_manager import PortfolioManager
 from agents.macro import MacroAgent
 from agents.onchain import OnChainAgent
 
@@ -26,6 +29,10 @@ def reduce_agent_state(left: AgentState | None, right: AgentState | None) -> Age
         left.macro_report = right.macro_report
     if right.onchain_report:
         left.onchain_report = right.onchain_report
+    if right.bull_proposal:
+        left.bull_proposal = right.bull_proposal
+    if right.bear_proposal:
+        left.bear_proposal = right.bear_proposal
     if right.strategy_proposal:
         left.strategy_proposal = right.strategy_proposal
     if right.risk_verdict:
@@ -123,9 +130,33 @@ async def onchain_node(state: GraphState):
             
     return {"agent_state": current_state, "completed_analysis": 1}
 
-async def strategist_node(state: GraphState):
-    """策略师节点：根据分析结果生成交易方案"""
-    agent = Strategist()
+async def bull_strategist_node(state: GraphState):
+    """多头策略师节点"""
+    agent = BullStrategist()
+    updates = await agent.run(state["agent_state"])
+    
+    current_state = state["agent_state"]
+    if updates:
+        for k, v in updates.items():
+            setattr(current_state, k, v)
+            
+    return {"agent_state": current_state}
+
+async def bear_strategist_node(state: GraphState):
+    """空头策略师节点"""
+    agent = BearStrategist()
+    updates = await agent.run(state["agent_state"])
+    
+    current_state = state["agent_state"]
+    if updates:
+        for k, v in updates.items():
+            setattr(current_state, k, v)
+            
+    return {"agent_state": current_state}
+
+async def portfolio_manager_node(state: GraphState):
+    """基金经理裁判节点"""
+    agent = PortfolioManager()
     updates = await agent.run(state["agent_state"])
     
     current_state = state["agent_state"]
@@ -207,11 +238,7 @@ def should_continue_negotiation(state: GraphState) -> Literal["revise", "reflect
         # 增加修订计数
         agent_state.strategy_revision_round += 1
         
-        # 设置反馈信息 (模拟 Reviewer 的反馈逻辑)
-        # 注意：Reviewer Agent 已经在 run() 中设置了 review_feedback，这里只需确认
-        # 如果 Reviewer 没有设置 feedback，我们手动补全？
-        # Reviewer.run() 应该处理这个逻辑。
-        
+        # 重新辩论：打回给两位策略师
         return "revise"
     
     # 4. 超过重试次数，直接反思结束
@@ -220,10 +247,6 @@ def should_continue_negotiation(state: GraphState) -> Literal["revise", "reflect
 def check_analysis_completion(state: GraphState) -> Literal["strategist", "wait"]:
     """
     检查并行分析是否全部完成。
-    LangGraph 的 Parallel 机制通常会自动等待所有分支完成再汇聚，
-    但如果我们使用自定义的汇聚逻辑，可以用这个函数。
-    目前 LangGraph 默认行为是等待所有入边，所以这个函数可能不需要，
-    直接在图定义中连接即可。
     """
     return "strategist"
 
@@ -238,7 +261,11 @@ def create_trading_workflow():
     workflow.add_node("sentiment", sentiment_node)
     workflow.add_node("macro", macro_node)
     workflow.add_node("onchain", onchain_node)
-    workflow.add_node("strategist", strategist_node)
+    
+    workflow.add_node("bull_strategist", bull_strategist_node)
+    workflow.add_node("bear_strategist", bear_strategist_node)
+    workflow.add_node("portfolio_manager", portfolio_manager_node)
+    
     workflow.add_node("reviewer", reviewer_node)
     workflow.add_node("reflector", reflector_node)
 
@@ -249,28 +276,37 @@ def create_trading_workflow():
     workflow.add_edge(START, "macro")
     workflow.add_edge(START, "onchain")
 
-    # 2. 汇聚到策略师 (Wait for all)
-    # LangGraph 会自动等待所有指向 strategist 的节点完成
-    workflow.add_edge("analyst", "strategist")
-    workflow.add_edge("sentiment", "strategist")
-    workflow.add_edge("macro", "strategist")
-    workflow.add_edge("onchain", "strategist")
+    # 2. 汇聚到多空策略师 (Wait for all analysis)
+    # 任何一个分析节点完成后，都会分别触发多空两方的思考（由于 LangGraph 会等待所有前置边完成）
+    workflow.add_edge("analyst", "bull_strategist")
+    workflow.add_edge("sentiment", "bull_strategist")
+    workflow.add_edge("macro", "bull_strategist")
+    workflow.add_edge("onchain", "bull_strategist")
+    
+    workflow.add_edge("analyst", "bear_strategist")
+    workflow.add_edge("sentiment", "bear_strategist")
+    workflow.add_edge("macro", "bear_strategist")
+    workflow.add_edge("onchain", "bear_strategist")
 
-    # 3. 策略到风控
-    workflow.add_edge("strategist", "reviewer")
+    # 3. 策略辩论汇聚到基金经理
+    workflow.add_edge("bull_strategist", "portfolio_manager")
+    workflow.add_edge("bear_strategist", "portfolio_manager")
+    
+    # 4. 基金经理裁决后交给风控
+    workflow.add_edge("portfolio_manager", "reviewer")
 
-    # 4. 风控条件分支（循环）
+    # 5. 风控条件分支（循环）
     workflow.add_conditional_edges(
         "reviewer",
         should_continue_negotiation,
         {
-            "revise": "strategist", # 回到策略师重写
+            "revise": "portfolio_manager", # 如果只是简单参数问题，PM 直接修改，或者也可以退回给策略师
             "reflect": "reflector", # 通过或最终拒绝，进入反思
             "end": "reflector"      # 异常情况
         }
     )
 
-    # 5. 反思后结束
+    # 6. 反思后结束
     workflow.add_edge("reflector", END)
 
     return workflow.compile()

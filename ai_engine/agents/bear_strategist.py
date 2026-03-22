@@ -19,9 +19,9 @@ from core.config import settings
 # from services.memory import memory_service
 # from services.execution import execution_service
 
-class Strategist(BaseAgent):
+class BearStrategist(BaseAgent):
     def __init__(self):
-        super().__init__("strategist", "The Strategist")
+        super().__init__("bear_strategist", "The Bear Strategist")
 
     async def run(self, state: AgentState) -> dict:
         from services.execution import execution_service
@@ -378,7 +378,7 @@ class Strategist(BaseAgent):
                     }
                 )
                 
-            return {"strategy_proposal": proposal}
+            return {"bear_proposal": proposal}
             
         except Exception as e:
             await self.think(f"Strategy generation failed: {str(e)}", session_id)
