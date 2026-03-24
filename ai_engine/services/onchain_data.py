@@ -25,8 +25,8 @@ class OnChainDataService:
                         logger.warning(f"OnChain data empty for {symbol}, triggering update...")
                         try:
                             await client.post(trigger_url, timeout=2.0)
-                        except:
-                            pass # Ignore trigger errors
+                        except Exception as trigger_exc:
+                            logger.warning(f"OnChain trigger failed for {symbol}: {trigger_exc}")
                         return {}
                         
                     return data

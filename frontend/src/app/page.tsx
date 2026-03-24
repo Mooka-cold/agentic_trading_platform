@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useMarketTicker } from '@/hooks/useMarketTicker';
+import { API_BASE_URL } from '@/lib/api/base';
 
 // --- Types ---
 interface MarketOverviewData {
@@ -129,21 +130,43 @@ export default function DashboardPage() {
   const [sentimentMonitor, setSentimentMonitor] = useState<SentimentMonitorData | null>(null);
   const [interpretationScope, setInterpretationScope] = useState<InterpretationScope>("symbol");
   const newsSeededRef = useRef(false);
-  const [activeSymbol, setActiveSymbol] = useState("BTC/USDT");
+  const [chartSymbol, setChartSymbol] = useState("");
+  const [runningSymbol, setRunningSymbol] = useState("");
   
   // Real-time Ticker Hook
-  const ticker = useMarketTicker(activeSymbol);
+  const ticker = useMarketTicker(chartSymbol);
 
-  // Poll runner status to sync active symbol
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSymbols = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/v1/market/symbols`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.symbols) && data.symbols.length > 0) {
+          const primary = String(data.symbols[0]);
+          setChartSymbol((prev) => prev || primary);
+          setRunningSymbol((prev) => prev || primary);
+        }
+      } catch (e) {
+        console.error("Load symbols failed", e);
+      }
+    };
+    fetchSymbols();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Poll runner status to track workflow runtime symbol only
   useEffect(() => {
       const checkStatus = async () => {
           try {
-              const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-              const res = await fetch(`${apiBase}/api/v1/workflow/runner/status`);
+              const res = await fetch(`${API_BASE_URL}/api/v1/workflow/runner/status`);
               if (res.ok) {
                   const data = await res.json();
-                  if (data.is_running && data.symbol && data.symbol !== activeSymbol) {
-                      setActiveSymbol(data.symbol);
+                  if (data.is_running && data.symbol) {
+                      setRunningSymbol(data.symbol);
                   }
               }
           } catch (e) {
@@ -153,16 +176,15 @@ export default function DashboardPage() {
       checkStatus();
       const interval = setInterval(checkStatus, 10000); // Check every 10s
       return () => clearInterval(interval);
-  }, [activeSymbol]);
+  }, []);
 
   // Poll basic market data (Historical / Indicators)
   useEffect(() => {
+    if (!chartSymbol) return;
     const fetchMarket = async () => {
       try {
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        
         // 1. Fetch Indicators (still from Klines for now, or could use ticker if indicators are in redis)
-        const latestKlinesRes = await fetch(`${apiBase}/api/v1/market/kline?symbol=${encodeURIComponent(activeSymbol)}&interval=1m&limit=1`);
+        const latestKlinesRes = await fetch(`${API_BASE_URL}/api/v1/market/kline?symbol=${encodeURIComponent(chartSymbol)}&interval=1m&limit=1`);
         let latestKlines: any[] = [];
         if (latestKlinesRes.ok) {
             latestKlines = await latestKlinesRes.json();
@@ -194,14 +216,14 @@ export default function DashboardPage() {
 
         // 2. Fetch News
         try {
-            const newsRes = await fetch(`${apiBase}/api/v1/news?limit=10`);
+            const newsRes = await fetch(`${API_BASE_URL}/api/v1/news?limit=10`);
             if (newsRes.ok) {
                 const newsData = await newsRes.json();
                 if (Array.isArray(newsData) && newsData.length === 0 && !newsSeededRef.current) {
                     newsSeededRef.current = true;
-                    const seedRes = await fetch(`${apiBase}/api/v1/jobs/sync-news`, { method: "POST" });
+                    const seedRes = await fetch(`${API_BASE_URL}/api/v1/jobs/sync-news`, { method: "POST" });
                     if (seedRes.ok) {
-                        const retryRes = await fetch(`${apiBase}/api/v1/news?limit=10`);
+                        const retryRes = await fetch(`${API_BASE_URL}/api/v1/news?limit=10`);
                         if (retryRes.ok) {
                             const retryData = await retryRes.json();
                             setNewsList(retryData);
@@ -216,7 +238,7 @@ export default function DashboardPage() {
         }
 
         // Fetch 24h stats from kline as fallback for high/low
-        const dailyKlinesRes = await fetch(`${apiBase}/api/v1/market/kline?symbol=${encodeURIComponent(activeSymbol)}&interval=1d&limit=2`);
+        const dailyKlinesRes = await fetch(`${API_BASE_URL}/api/v1/market/kline?symbol=${encodeURIComponent(chartSymbol)}&interval=1d&limit=2`);
         let dailyKlines: any[] = [];
         if (dailyKlinesRes.ok) {
             dailyKlines = await dailyKlinesRes.json();
@@ -261,27 +283,25 @@ export default function DashboardPage() {
     fetchMarket();
     const interval = setInterval(fetchMarket, 5000); 
     return () => clearInterval(interval);
-  }, [activeSymbol]);
+  }, [chartSymbol, ticker]);
 
   // Separate Effect for Equity Calculation using Real-time Ticker
   useEffect(() => {
       const calcEquity = async () => {
         try {
-            const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-            
             // Fetch real account balance/equity instead of just balance endpoint
-            const accountRes = await fetch(`${apiBase}/api/v1/trade/paper/account`);
+            const accountRes = await fetch(`${API_BASE_URL}/api/v1/trade/paper/account`);
             if (accountRes.ok) {
                 const accountData = await accountRes.json();
                 setTotalBalance(parseFloat(accountData.equity || accountData.balance || 0));
             } else {
                 // Fallback to old balance endpoint if paper account fails
-                const balanceRes = await fetch(`${apiBase}/api/v1/trade/balance?currency=USDT`);
+                const balanceRes = await fetch(`${API_BASE_URL}/api/v1/trade/balance?currency=USDT`);
                 if (balanceRes.ok) {
                     const balanceData = await balanceRes.json();
                     let equity = parseFloat(balanceData.balance || 0);
                     
-                    const posRes = await fetch(`${apiBase}/api/v1/trade/positions`);
+                    const posRes = await fetch(`${API_BASE_URL}/api/v1/trade/positions`);
                     if (posRes.ok) {
                         const positions = await posRes.json();
                         
@@ -289,7 +309,7 @@ export default function DashboardPage() {
                         for (const p of positions) {
                              let posPrice = p.entry_price;
                              // Use Real-time Ticker Price if available and matching symbol
-                             if (p.symbol === activeSymbol && ticker?.price) {
+                             if (p.symbol === chartSymbol && ticker?.price) {
                                  posPrice = ticker.price;
                              }
                              
@@ -314,13 +334,12 @@ export default function DashboardPage() {
       if (ticker) {
           calcEquity();
       }
-  }, [ticker, activeSymbol]);
+  }, [ticker, chartSymbol, runningSymbol]);
 
   useEffect(() => {
     const fetchRiskState = async () => {
       try {
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        const res = await fetch(`${apiBase}/api/v1/trade/risk/state`);
+        const res = await fetch(`${API_BASE_URL}/api/v1/trade/risk/state`);
         if (!res.ok) return;
         const data: RiskStateData = await res.json();
         setRiskState(data);
@@ -336,12 +355,13 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!chartSymbol) return;
     const fetchIntelligence = async () => {
       try {
         const [aggRes, interpRes, interpAllRes, monitorRes] = await Promise.all([
-          fetch(`/api/ai_engine/sentiment/aggregate?symbol=${encodeURIComponent(activeSymbol)}`),
-          fetch(`/api/ai_engine/sentiment/interpretations?symbol=${encodeURIComponent(activeSymbol)}&limit=40&scope=symbol`),
-          fetch(`/api/ai_engine/sentiment/interpretations?symbol=${encodeURIComponent(activeSymbol)}&limit=80&scope=all`),
+          fetch(`/api/ai_engine/sentiment/aggregate?symbol=${encodeURIComponent(chartSymbol)}`),
+          fetch(`/api/ai_engine/sentiment/interpretations?symbol=${encodeURIComponent(chartSymbol)}&limit=40&scope=symbol`),
+          fetch(`/api/ai_engine/sentiment/interpretations?symbol=${encodeURIComponent(chartSymbol)}&limit=80&scope=all`),
           fetch(`/api/ai_engine/sentiment/monitor?hours=24`)
         ]);
         if (aggRes.ok) {
@@ -371,17 +391,16 @@ export default function DashboardPage() {
     fetchIntelligence();
     const timer = setInterval(fetchIntelligence, 10000);
     return () => clearInterval(timer);
-  }, [activeSymbol]);
+  }, [chartSymbol]);
 
   const saveRiskConfig = async () => {
     setRiskSaving(true);
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const payload = {
         daily_loss_limit_pct: Number(dailyLossLimit) / 100,
         max_drawdown_limit_pct: Number(maxDdLimit) / 100
       };
-      const res = await fetch(`${apiBase}/api/v1/trade/risk/config`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/trade/risk/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -403,13 +422,12 @@ export default function DashboardPage() {
 
   const resetDailyRisk = async () => {
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${apiBase}/api/v1/trade/risk/reset-daily`, { method: "POST" });
+      const res = await fetch(`${API_BASE_URL}/api/v1/trade/risk/reset-daily`, { method: "POST" });
       if (!res.ok) {
         alert("重置失败");
         return;
       }
-      const stateRes = await fetch(`${apiBase}/api/v1/trade/risk/state`);
+      const stateRes = await fetch(`${API_BASE_URL}/api/v1/trade/risk/state`);
       if (stateRes.ok) {
         const state = await stateRes.json();
         setRiskState(state);
@@ -454,13 +472,16 @@ export default function DashboardPage() {
           
           <div className="h-[34vh] min-h-[250px] grid grid-cols-12 gap-4">
              <div className="col-span-7 bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex flex-col">
-                <MarketChartFeature symbol={activeSymbol} onSymbolChange={setActiveSymbol} />
+                <MarketChartFeature
+                  symbol={chartSymbol}
+                  onSymbolChange={setChartSymbol}
+                />
              </div>
              <div className="col-span-3">
                <TickerOrderBookCard ticker={ticker} />
              </div>
              <div className="col-span-2 flex flex-col gap-4">
-                <MarketOverview marketData={marketData} signal={null} symbol={activeSymbol} />
+                <MarketOverview marketData={marketData} signal={null} symbol={chartSymbol} />
              </div>
           </div>
 

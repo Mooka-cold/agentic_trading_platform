@@ -71,6 +71,32 @@ class PaperTradingAdapter(ExecutionAdapter):
         except Exception as e:
             raise e
 
+    def place_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: float,
+        current_price: float,
+        trigger_price: float = None,
+        sl: float = None,
+        tp: float = None,
+        session_id: str = None,
+        user_id: int = None,
+    ):
+        return self.service.place_order(
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            current_price=current_price,
+            trigger_price=trigger_price,
+            sl=sl,
+            tp=tp,
+            session_id=session_id,
+            user_id=user_id if user_id is not None else self.user_id,
+        )
+
     def get_balance(self, currency: str = "USDT") -> float:
         account = self.service.get_or_create_account(self.user_id)
         # Assuming account has balance in base currency (USDT)

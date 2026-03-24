@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { API_BASE_URL } from '@/lib/api/base';
 
 export interface SecondPoint {
   time: number;
@@ -15,8 +16,7 @@ export const useSecondSeries = (symbol: string = 'BTC/USDT', window: number = 60
 
     const fetchSeries = async () => {
       try {
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        const res = await fetch(`${apiBase}/api/v1/market/seconds?symbol=${encodeURIComponent(symbol)}&window=${window}`);
+        const res = await fetch(`${API_BASE_URL}/api/v1/market/seconds?symbol=${encodeURIComponent(symbol)}&window=${window}`);
         if (!res.ok || !isMounted) return;
         const data = await res.json();
         if (Array.isArray(data?.points)) {

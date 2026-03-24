@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { ChevronDown, ChevronUp, Activity, Zap, Pause } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api/base";
 
 interface MarketOverviewProps {
     marketData: any;
@@ -15,7 +16,7 @@ export const MarketOverview = ({ marketData, signal, symbol }: MarketOverviewPro
     const [isProcessing, setIsProcessing] = useState(false);
     const [liveSignal, setLiveSignal] = useState<any>(null);
     const [liveReasoning, setLiveReasoning] = useState<string>("");
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3201";
+    const apiUrl = API_BASE_URL;
 
     // Fetch running status
     const checkStatus = useCallback(async () => {
@@ -37,7 +38,10 @@ export const MarketOverview = ({ marketData, signal, symbol }: MarketOverviewPro
     }, [checkStatus]);
 
     useEffect(() => {
-        const streamSymbol = symbol || "BTC/USDT";
+        const streamSymbol = (symbol || "").trim();
+        if (!streamSymbol) {
+            return;
+        }
         const evtSource = new EventSource(`/api/ai_engine/stream/monitor?symbol=${encodeURIComponent(streamSymbol)}`);
         evtSource.onmessage = (event) => {
             try {
@@ -73,7 +77,8 @@ export const MarketOverview = ({ marketData, signal, symbol }: MarketOverviewPro
                 : `${apiUrl}/api/v1/workflow/run`;
             
             const method = "POST";
-            const body = isRunning ? {} : { symbol: "BTC/USDT" };
+            const requestedSymbol = (symbol || "").trim();
+            const body = isRunning ? {} : (requestedSymbol ? { symbol: requestedSymbol } : {});
             
             const res = await fetch(url, {
                 method,

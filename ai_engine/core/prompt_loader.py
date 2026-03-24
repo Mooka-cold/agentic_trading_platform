@@ -2,6 +2,7 @@ import yaml
 from pathlib import Path
 from langchain_core.prompts import ChatPromptTemplate
 from typing import Dict, Any
+from string import Formatter
 
 class PromptRegistry:
     def __init__(self, prompt_dir="prompts"):
@@ -29,6 +30,18 @@ class PromptRegistry:
              raise ValueError(f"Invalid prompt config in {system_path}")
 
         system_template = system_config['template']
+        input_variables = system_config.get("input_variables")
+        if not isinstance(input_variables, list) or not all(isinstance(v, str) for v in input_variables):
+            raise ValueError(f"Invalid input_variables in {system_path}")
+        template_variables = self._extract_template_variables(system_template)
+        declared_variables = set(input_variables)
+        if template_variables != declared_variables:
+            template_only = sorted(template_variables - declared_variables)
+            declared_only = sorted(declared_variables - template_variables)
+            raise ValueError(
+                f"Prompt variable contract mismatch in {system_path}. "
+                f"template_only={template_only}, declared_only={declared_only}"
+            )
         prompt = ChatPromptTemplate.from_template(system_template)
         
         # 2. Load User Config
@@ -42,9 +55,6 @@ class PromptRegistry:
                     # Convention: Prefix user keys with 'user_' to match system prompt variables
                     for key, value in user_yaml.items():
                         user_vars[f"user_{key}"] = value
-        else:
-            # Fallback: empty strings for user vars if file missing
-            pass
 
         # 3. Partial Application
         if user_vars:
@@ -52,6 +62,13 @@ class PromptRegistry:
 
         self._cache[cache_key] = prompt
         return prompt
+
+    def _extract_template_variables(self, template: str) -> set[str]:
+        variables = set()
+        for _, field_name, _, _ in Formatter().parse(template):
+            if field_name:
+                variables.add(field_name)
+        return variables
 
     def get_user_config(self, agent_name: str, user_variant: str = "default") -> Dict[str, Any]:
         """
@@ -62,6 +79,17 @@ class PromptRegistry:
              with open(user_path, 'r') as f:
                 return yaml.safe_load(f) or {}
         return {}
+
+    def get_system_prompt_template(self, agent_name: str) -> str:
+        system_path = self.base_path / "system" / f"{agent_name}.yaml"
+        if not system_path.exists():
+            raise FileNotFoundError(f"System prompt not found: {system_path}")
+        with open(system_path, 'r') as f:
+            system_config = yaml.safe_load(f) or {}
+        template = system_config.get("template")
+        if not isinstance(template, str):
+            raise ValueError(f"Invalid prompt config in {system_path}")
+        return template
 
     def update_user_config(self, agent_name: str, config: Dict[str, Any], user_variant: str = "default"):
         """

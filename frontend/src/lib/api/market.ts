@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from "./base";
 
 export interface KlineData {
   time: number;
@@ -41,7 +41,7 @@ export const MarketAPI = {
   getKline: async (symbol: string, interval: string = '1m', limit: number = 100): Promise<KlineData[]> => {
     try {
       // Use encodeURIComponent for symbol (e.g., BTC/USDT -> BTC%2FUSDT)
-      const res = await fetch(`${API_URL}/api/v1/market/kline?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`);
+      const res = await fetch(`${API_BASE_URL}/api/v1/market/kline?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`);
       if (!res.ok) {
         console.error('API Error:', res.statusText);
         return [];

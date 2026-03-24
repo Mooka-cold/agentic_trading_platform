@@ -9,54 +9,54 @@ from workflow import WorkflowEngine
 from core.prompt_loader import registry
 from sse_starlette.sse import EventSourceResponse
 import asyncio
-
-app = FastAPI(title="AI Engine", version="0.1.0")
-
-# Force reload trigger - 2024-03-02
-# CORS Middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for dev
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+import time
+from contextlib import asynccontextmanager
+from shared.core.symbols import get_default_symbol
 
 llm_service = LLMService()
 workflow_engine = WorkflowEngine()
 watcher_service = WatcherService(workflow_engine)
+DEFAULT_SYMBOL = get_default_symbol()
 
 
-@app.on_event("startup")
-async def startup_event():
+async def _restore_loop_state():
+    import json
+    redis_client = workflow_engine.redis_client
+    loop_active = await redis_client.get("system_status:loop_active")
+    if isinstance(loop_active, bytes):
+        loop_active = loop_active.decode()
+    if loop_active == "true":
+        config_str = await redis_client.get("system_status:loop_config")
+        if isinstance(config_str, bytes):
+            config_str = config_str.decode()
+        if config_str:
+            config = json.loads(config_str)
+            symbol = config.get("symbol", DEFAULT_SYMBOL)
+            session_id = config.get("session_id") or f"restored-{int(time.time())}"
+            print(f"Restoring active loop for {symbol}...")
+            await workflow_engine.start_loop(symbol, session_id)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
     print("Starting AI Engine...")
     await watcher_service.start()
-    
-    # Check if loop should be running (restore state)
     try:
-        import json
-        redis_client = workflow_engine.redis_client
-        loop_active = await redis_client.get("system_status:loop_active")
-        if isinstance(loop_active, bytes):
-            loop_active = loop_active.decode()
-        if loop_active == "true":
-            config_str = await redis_client.get("system_status:loop_config")
-            if isinstance(config_str, bytes):
-                config_str = config_str.decode()
-            if config_str:
-                config = json.loads(config_str)
-                symbol = config.get("symbol", "BTC/USDT")
-                session_id = config.get("session_id", "restored-session")
-                print(f"Restoring active loop for {symbol}...")
-                await workflow_engine.start_loop(symbol, session_id)
+        await _restore_loop_state()
     except Exception as e:
         print(f"Failed to restore loop state: {e}")
-    
-
-@app.on_event("shutdown")
-async def shutdown_event():
+    yield
     await watcher_service.stop()
     await workflow_engine.close()
+
+app = FastAPI(title="AI Engine", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class AnalysisRequest(BaseModel):
     symbol: str
@@ -68,7 +68,7 @@ class UserConfigUpdate(BaseModel):
     config: Dict[str, Any]
 
 class SentimentInterpreterRequest(BaseModel):
-    symbol: str = "BTC/USDT"
+    symbol: str = DEFAULT_SYMBOL
     claim_limit: int = 200
     concurrency: int = 20
 
@@ -109,7 +109,7 @@ async def reload_config():
 
 @app.post("/sentiment/interpreter/run")
 async def run_sentiment_interpreter(background_tasks: BackgroundTasks, req: Optional[SentimentInterpreterRequest] = None):
-    symbol = req.symbol if req else "BTC/USDT"
+    symbol = req.symbol if req else DEFAULT_SYMBOL
     claim_limit = req.claim_limit if req else 200
     concurrency = req.concurrency if req else 20
     async def _run():
@@ -125,13 +125,13 @@ async def run_sentiment_interpreter(background_tasks: BackgroundTasks, req: Opti
     return {"status": "triggered"}
 
 @app.get("/sentiment/aggregate")
-async def get_sentiment_aggregate(symbol: str = "BTC/USDT"):
+async def get_sentiment_aggregate(symbol: str = DEFAULT_SYMBOL):
     from services.sentiment import sentiment_service
     fng = await sentiment_service.get_fear_greed_index()
     return sentiment_service.aggregate_interpreted_news(symbol, fng)
 
 @app.get("/sentiment/interpretations")
-async def get_sentiment_interpretations(symbol: str = "BTC/USDT", limit: int = 20, scope: str = "symbol"):
+async def get_sentiment_interpretations(symbol: str = DEFAULT_SYMBOL, limit: int = 20, scope: str = "symbol"):
     from services.sentiment import sentiment_service
     safe_limit = max(1, min(limit, 100))
     safe_scope = "all" if str(scope).lower() == "all" else "symbol"
@@ -161,7 +161,7 @@ async def run_workflow_endpoint(req: AnalysisRequest):
     """
     Start or Update Continuous Workflow Loop
     """
-    session_id = req.session_id or "continuous_session"
+    session_id = req.session_id or workflow_engine.latest_config.get("session_id") or f"continuous-{int(time.time())}"
     # Start loop (or update config if running)
     await workflow_engine.start_loop(req.symbol, session_id)
     return {"status": "started", "session_id": session_id, "mode": "continuous"}
@@ -230,21 +230,18 @@ async def stream_monitor(symbol: str, request: Request):
     SSE Endpoint for real-time monitoring of a symbol (Continuous Mode)
     """
     async def event_generator():
-        # Handle slash in symbol if encoded, e.g. BTC%2FUSDT -> BTC/USDT
-        # Actually symbol param is already decoded by FastAPI if passed as path param?
-        # But slash in path param is tricky. 
-        # Better to pass encoded or handle 'BTC-USDT'
-        # BaseAgent logic: "auto-BTC/USDT-xxx" -> target_symbol="BTC/USDT"
-        # Redis channel: "agent_monitor:BTC/USDT"
-        
-        # If symbol comes as "BTC-USDT" from frontend (safe URL), replace with slash if needed?
-        # Let's assume frontend passes "BTC/USDT" properly encoded.
-        # But if path param has slash, it breaks routing.
-        # Workaround: Use query param or catch-all path.
-        # Or simple: Frontent uses query param ?symbol=...
-        # But here it is path param.
-        # Let's change to query param to be safe.
-        pass # Replaced by logic below
+        channel = f"agent_monitor:{symbol}"
+        print(f"Monitor(path) subscribing to: {channel}")
+        stream = redis_stream.subscribe_channel(channel)
+        try:
+            async for message in stream:
+                if await request.is_disconnected():
+                    break
+                yield {"data": message}
+        except Exception as e:
+            print(f"Stream error: {e}")
+
+    return EventSourceResponse(event_generator())
 
 @app.get("/stream/monitor")
 async def stream_monitor_query(symbol: str, request: Request):
@@ -273,7 +270,8 @@ async def get_agent_config(agent_name: str, user_variant: str = "default"):
     """
     try:
         config = registry.get_user_config(agent_name, user_variant)
-        return {"agent": agent_name, "variant": user_variant, "config": config}
+        default_prompt = registry.get_system_prompt_template(agent_name)
+        return {"agent": agent_name, "variant": user_variant, "config": config, "default_prompt": default_prompt}
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
 

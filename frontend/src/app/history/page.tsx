@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { KlineChart } from "@/components/ui/KlineChart";
+import { API_BASE_URL } from "@/lib/api/base";
 
 interface WorkflowSession {
   id: string;
@@ -43,7 +44,7 @@ interface WorkflowLog {
   artifact?: any;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = API_BASE_URL;
 
 const formatDuration = (seconds?: number) => {
   if (!seconds || seconds <= 0) return "0s";
@@ -525,7 +526,7 @@ const ArtifactViewer = ({ artifact }: { artifact: any }) => {
                 </span>
             </div>
             <div className="text-[10px] text-slate-600">
-                Based on {artifact.news_analysis.length} recent articles
+                Based on {artifact.news_analysis.length} articles in last {artifact.sentiment_window_hours || 6}h
             </div>
          </div>
          
@@ -581,6 +582,9 @@ const ArtifactViewer = ({ artifact }: { artifact: any }) => {
 const getAgentColor = (id: string) => {
   switch(id) {
     case 'analyst': return 'border-blue-500';
+    case 'bull_strategist': return 'border-purple-500';
+    case 'bear_strategist': return 'border-fuchsia-500';
+    case 'portfolio_manager': return 'border-violet-400';
     case 'strategist': return 'border-purple-500';
     case 'reviewer': return 'border-red-500';
     case 'executor': return 'border-green-500';
@@ -601,7 +605,10 @@ const getTypeColor = (type: string) => {
 const AgentBadge = ({ id }: { id: string }) => {
   const config: any = {
     analyst: { color: 'text-blue-400', bg: 'bg-blue-900/20', icon: <Activity size={14} />, label: 'The Analyst' },
-    strategist: { color: 'text-purple-400', bg: 'bg-purple-900/20', icon: <Cpu size={14} />, label: 'The Strategist' },
+    bull_strategist: { color: 'text-purple-400', bg: 'bg-purple-900/20', icon: <Cpu size={14} />, label: 'Bull Strategist' },
+    bear_strategist: { color: 'text-fuchsia-400', bg: 'bg-fuchsia-900/20', icon: <Cpu size={14} />, label: 'Bear Strategist' },
+    portfolio_manager: { color: 'text-violet-300', bg: 'bg-violet-900/20', icon: <Database size={14} />, label: 'Portfolio Manager' },
+    strategist: { color: 'text-purple-400', bg: 'bg-purple-900/20', icon: <Cpu size={14} />, label: 'Legacy Strategist' },
     reviewer: { color: 'text-red-400', bg: 'bg-red-900/20', icon: <Database size={14} />, label: 'The Reviewer' },
     executor: { color: 'text-green-400', bg: 'bg-green-900/20', icon: <ArrowRight size={14} />, label: 'Executor' },
     reflector: { color: 'text-yellow-400', bg: 'bg-yellow-900/20', icon: <History size={14} />, label: 'The Reflector' },

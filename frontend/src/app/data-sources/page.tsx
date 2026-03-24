@@ -3,6 +3,7 @@
 import { SideNav } from "@/components/layout/SideNav";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart3, Database, Play, RefreshCw } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api/base";
 
 type CalibrationMetrics = {
   symbol: string;
@@ -47,7 +48,7 @@ type ActiveParamsResponse = {
   description?: string;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3201";
+const API_URL = API_BASE_URL;
 const PARAM_LABELS: Record<string, string> = {
   quality_confidence_floor: "质量置信门槛",
   min_magnitude: "最小影响强度",

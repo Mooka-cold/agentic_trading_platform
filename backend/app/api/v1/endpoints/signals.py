@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.db.session import get_user_db
 from shared.models.signal import Signal
+from shared.models.system import SystemConfig
 from pydantic import BaseModel
 from datetime import datetime
 from uuid import UUID
@@ -52,11 +53,40 @@ class ScheduleConfig(BaseModel):
     enabled: bool
     interval: str
 
+@router.get("/schedule", response_model=ScheduleConfig)
+def get_schedule_config(db: Session = Depends(get_user_db)) -> Any:
+    enabled_cfg = db.query(SystemConfig).filter(SystemConfig.key == "AUTO_TRADING_SCHEDULE_ENABLED").first()
+    interval_cfg = db.query(SystemConfig).filter(SystemConfig.key == "AUTO_TRADING_SCHEDULE_INTERVAL").first()
+    enabled = str(enabled_cfg.value).strip().lower() == "true" if enabled_cfg else False
+    interval = interval_cfg.value if interval_cfg and interval_cfg.value else "1h"
+    return ScheduleConfig(enabled=enabled, interval=interval)
+
 @router.post("/schedule")
-async def update_schedule(config: ScheduleConfig):
-    """
-    Update Auto-Trading Schedule (Mock implementation for MVP)
-    """
-    # TODO: Implement APScheduler integration
-    print(f"[System] Schedule Updated: {config}")
+async def update_schedule(config: ScheduleConfig, db: Session = Depends(get_user_db)) -> Any:
+    valid_intervals = {"5m", "15m", "30m", "1h", "4h", "1d"}
+    if config.interval not in valid_intervals:
+        config.interval = "1h"
+
+    enabled_cfg = db.query(SystemConfig).filter(SystemConfig.key == "AUTO_TRADING_SCHEDULE_ENABLED").first()
+    interval_cfg = db.query(SystemConfig).filter(SystemConfig.key == "AUTO_TRADING_SCHEDULE_INTERVAL").first()
+
+    if enabled_cfg:
+        enabled_cfg.value = "true" if config.enabled else "false"
+    else:
+        db.add(SystemConfig(
+            key="AUTO_TRADING_SCHEDULE_ENABLED",
+            value="true" if config.enabled else "false",
+            description="Auto trading scheduler switch"
+        ))
+
+    if interval_cfg:
+        interval_cfg.value = config.interval
+    else:
+        db.add(SystemConfig(
+            key="AUTO_TRADING_SCHEDULE_INTERVAL",
+            value=config.interval,
+            description="Auto trading scheduler interval"
+        ))
+
+    db.commit()
     return {"status": "success", "message": "Schedule updated", "config": config}

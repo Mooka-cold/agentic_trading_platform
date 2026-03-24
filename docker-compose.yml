@@ -74,6 +74,13 @@ services:
       - db-users
       - db-market
       - redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       - ./backend:/app
       - ./shared:/app/shared
@@ -101,6 +108,13 @@ services:
       - db-users
       - db-market
       - redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       - ./ai_engine:/app
       - ./shared:/app/shared
@@ -119,11 +133,18 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - NEWS_API_KEY=${NEWS_API_KEY}
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
-      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,DOGE/USDT,TRX/USDT
       - PYTHONPATH=/app:/app/shared
     depends_on:
       - db-users
       - db-market
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       - ./crawler:/app
       - ./shared:/app/shared
@@ -139,7 +160,7 @@ services:
       - BACKEND_URL=http://backend:8000
       - AI_ENGINE_URL=http://ai-engine:8000
       - CRAWLER_URL=http://crawler:8000
-      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,DOGE/USDT,TRX/USDT
       - DATABASE_USER_URL=postgresql://user_admin:user_password@db-users:5432/ai_trading_users
       - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
       - REDIS_URL=redis://redis:6379/0
@@ -148,6 +169,13 @@ services:
       - backend
       - ai-engine
       - crawler
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://backend:8000/health', timeout=3); urllib.request.urlopen('http://ai-engine:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       - ./scheduler:/app
       - ./shared:/app/shared

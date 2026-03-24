@@ -4,24 +4,30 @@ import { NextRequest, NextResponse } from 'next/server';
 // In Hybrid Mode (Local Frontend), this should be set to http://<REMOTE_IP>:3202
 const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://ai-engine:8000';
 
-export async function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(req, params);
+type RouteContext = { params: Promise<{ path: string[] }> };
+
+export async function GET(req: NextRequest, context: RouteContext) {
+  const { path } = await context.params;
+  return proxy(req, path);
 }
 
-export async function POST(req: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(req, params);
+export async function POST(req: NextRequest, context: RouteContext) {
+  const { path } = await context.params;
+  return proxy(req, path);
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(req, params);
+export async function PUT(req: NextRequest, context: RouteContext) {
+  const { path } = await context.params;
+  return proxy(req, path);
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { path: string[] } }) {
-  return proxy(req, params);
+export async function DELETE(req: NextRequest, context: RouteContext) {
+  const { path } = await context.params;
+  return proxy(req, path);
 }
 
-async function proxy(req: NextRequest, params: { path: string[] }) {
-  const path = params.path.join('/');
+async function proxy(req: NextRequest, pathSegments: string[]) {
+  const path = pathSegments.join('/');
   // Get search params from the request URL
   const searchParams = req.nextUrl.searchParams.toString();
   const url = `${AI_ENGINE_URL}/${path}${searchParams ? `?${searchParams}` : ''}`;

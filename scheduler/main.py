@@ -1,5 +1,3 @@
-import os
-
 import asyncio
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -74,10 +72,6 @@ async def task_sync_macro():
     # Call Crawler Service
     await trigger_task("Sync Macro Data", f"{CRAWLER_URL}/api/v1/trigger/macro", method="POST")
 
-async def task_check_streamer():
-    # Call Backend to ensure Streamer is running
-    await trigger_task("Check Streamer", f"{BACKEND_URL}/api/v1/streamer/health", method="POST")
-
 async def task_run_sentiment_interpreter():
     await trigger_task("Run Sentiment Interpreter", f"{AI_ENGINE_URL}/sentiment/interpreter/run")
 
@@ -135,10 +129,7 @@ async def main():
     scheduler.add_job(task_cleanup_sessions, "cron", hour=3, minute=0, id="cleanup_sessions")
     scheduler.add_job(task_run_llm_daily_calibration, "cron", hour=0, minute=20, id="run_llm_daily_calibration")
 
-    # 7. Streamer Health Check (Every 10s)
-    # scheduler.add_job(task_check_streamer, "interval", seconds=10, id="check_streamer")
-
-    # 8. Zombie Cleanup (Every 10m)
+    # 7. Zombie Cleanup (Every 10m)
     scheduler.add_job(task_cleanup_zombies, "interval", minutes=10, id="cleanup_zombies")
     
     logger.info("🚀 Global Scheduler Started")

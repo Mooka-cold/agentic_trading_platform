@@ -6,15 +6,13 @@ from app.services.macro_crawler import MacroCrawlerService
 from app.services.onchain_crawler import OnChainCrawlerService
 from app.services.market_crawler import MarketCrawler
 from app.services.news_crawler import NewsCrawler
-import os
+from shared.core.symbols import get_schedule_symbols_from_env
 
 router = APIRouter()
 
 
 def get_active_symbols() -> list[str]:
-    raw = os.getenv("SCHEDULE_SYMBOLS", "BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT")
-    symbols = [item.strip() for item in raw.split(",") if item.strip()]
-    return symbols or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+    return get_schedule_symbols_from_env()
 
 
 class MarketBackfillRequest(BaseModel):

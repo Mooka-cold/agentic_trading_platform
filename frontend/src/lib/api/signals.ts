@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from "./base";
 
 export interface Signal {
   id: string;
@@ -13,7 +13,7 @@ export interface Signal {
 export const SignalsAPI = {
   getLatest: async (symbol: string): Promise<Signal | null> => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/signals/latest?symbol=${encodeURIComponent(symbol)}`);
+      const res = await fetch(`${API_BASE_URL}/api/v1/signals/latest?symbol=${encodeURIComponent(symbol)}`);
       if (!res.ok) {
         if (res.status === 404) return null;
         console.error('API Error:', res.statusText);
@@ -28,7 +28,7 @@ export const SignalsAPI = {
 
   getHistory: async (symbol?: string, limit: number = 20): Promise<Signal[]> => {
     try {
-      let url = `${API_URL}/api/v1/signals/?limit=${limit}`;
+      let url = `${API_BASE_URL}/api/v1/signals/?limit=${limit}`;
       if (symbol) {
         url += `&symbol=${encodeURIComponent(symbol)}`;
       }

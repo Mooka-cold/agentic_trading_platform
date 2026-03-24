@@ -101,7 +101,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
       - NEWS_API_KEY=${NEWS_API_KEY}
-      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,DOGE/USDT,TRX/USDT
     depends_on:
       - db-users
       - db-market
@@ -117,7 +117,7 @@ services:
       - BACKEND_URL=http://backend:8000
       - AI_ENGINE_URL=http://ai-engine:8000
       - CRAWLER_URL=http://crawler:8000
-      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT
+      - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,DOGE/USDT,TRX/USDT
     depends_on:
       - backend
       - ai-engine

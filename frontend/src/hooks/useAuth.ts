@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAccount, useSignMessage, useDisconnect } from 'wagmi';
+import { API_BASE_URL } from '@/lib/api/base';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = API_BASE_URL;
 
 export function useAuth() {
   const { address, isConnected } = useAccount();

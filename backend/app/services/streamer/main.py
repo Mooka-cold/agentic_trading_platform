@@ -343,6 +343,21 @@ class MarketStreamer:
                             # 3. DB (Upsert latest)
                             await self.save_to_db(candle_map, indicators)
                             
+                            # 4. Check Pending Orders (Simulated Matching Engine)
+                            try:
+                                from app.services.paper_trading import PaperTradingService
+                                user_session = SessionLocalUser()
+                                try:
+                                    pt_service = PaperTradingService(user_session)
+                                    current_prices = {SYMBOL: float(candle_map['c'])}
+                                    triggered = pt_service.check_and_trigger_pending_orders(current_prices)
+                                    if triggered > 0:
+                                        logger.info(f"⚡ Simulated Match Engine: Triggered {triggered} pending orders at price {candle_map['c']}")
+                                finally:
+                                    user_session.close()
+                            except Exception as e:
+                                logger.error(f"Failed to check pending orders: {e}")
+                            
                             if candle_map['confirm'] == "1":
                                 logger.info(f"💾 Candle Closed: {pd.to_datetime(int(candle_map['ts']), unit='ms')}")
                             else:

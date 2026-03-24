@@ -1,7 +1,8 @@
 "use client";
 
 import { SideNav } from "@/components/layout/SideNav";
-import { Edit2, TrendingUp, Wallet, Clock, Settings, User } from "lucide-react";
+import { Edit2, TrendingUp, Clock, Settings, User } from "lucide-react";
+import Image from "next/image";
 
 export default function ProfilePage() {
   return (
@@ -21,7 +22,7 @@ export default function ProfilePage() {
         {/* Profile Header */}
         <div className="bg-slate-900 rounded-2xl p-8 border border-slate-800 mb-8 flex flex-col md:flex-row items-center gap-8 shadow-xl">
           <div className="w-24 h-24 rounded-full bg-slate-800 overflow-hidden border-4 border-slate-700 shadow-lg relative shrink-0">
-             <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="User" className="w-full h-full" />
+             <Image src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="User" fill sizes="96px" unoptimized className="w-full h-full" />
              <button className="absolute bottom-0 right-0 bg-blue-600 p-1.5 rounded-full shadow-md text-white hover:bg-blue-700 transition-colors">
                <Edit2 size={12} />
              </button>

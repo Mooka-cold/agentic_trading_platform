@@ -16,7 +16,9 @@ import { motion } from "framer-motion";
 
 const AGENTS = [
   { id: "analyst", name: "The Analyst", icon: LineChart, color: "#3b82f6" },
-  { id: "strategist", name: "The Strategist", icon: BrainCircuit, color: "#8b5cf6" },
+  { id: "bull_strategist", name: "Bull Strategist", icon: BrainCircuit, color: "#8b5cf6" },
+  { id: "bear_strategist", name: "Bear Strategist", icon: BrainCircuit, color: "#a855f7" },
+  { id: "portfolio_manager", name: "Portfolio Manager", icon: BrainCircuit, color: "#c084fc" },
   { id: "reviewer", name: "The Reviewer", icon: ShieldCheck, color: "#ef4444" },
   { id: "reflector", name: "The Reflector", icon: Activity, color: "#10b981" },
 ];
@@ -24,6 +26,7 @@ const AGENTS = [
 export const AgentConfigEditor = () => {
   const [selectedAgentId, setSelectedAgentId] = useState("analyst");
   const [configContent, setConfigContent] = useState("");
+  const [defaultPrompt, setDefaultPrompt] = useState("");
   const [configKey, setConfigKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -40,6 +43,7 @@ export const AgentConfigEditor = () => {
     setLoading(true);
     try {
       const data = await PromptAPI.getConfig(agentId);
+      setDefaultPrompt(String(data.default_prompt || ""));
       // Dynamically detect the config key
       const keys = Object.keys(data.config);
       if (keys.length > 0) {
@@ -208,6 +212,33 @@ export const AgentConfigEditor = () => {
                     spellCheck={false}
                 />
             )}
+        </div>
+
+        <div style={{ borderTop: '1px solid #1e293b', backgroundColor: '#0b1220' }}>
+            <div style={{ padding: '10px 24px', color: '#94a3b8', fontSize: '12px', fontWeight: 600 }}>
+                Default Prompt (Read-only)
+            </div>
+            <div style={{ padding: '0 24px 16px 24px' }}>
+                <textarea
+                    value={defaultPrompt}
+                    readOnly
+                    style={{
+                        width: '100%',
+                        height: '180px',
+                        backgroundColor: '#020617',
+                        color: '#94a3b8',
+                        padding: '14px',
+                        border: '1px solid #1e293b',
+                        borderRadius: '8px',
+                        outline: 'none',
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        lineHeight: '1.55',
+                        resize: 'none'
+                    }}
+                    spellCheck={false}
+                />
+            </div>
         </div>
         
         {/* Footer Info */}

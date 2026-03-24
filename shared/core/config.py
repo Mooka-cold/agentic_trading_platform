@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     
     # Trading
     TRADING_MODE: str = "PAPER" # PAPER, LIVE
+    LIVE_TRADING_ENABLED: bool = False
 
     # Service URLs (Internal Communication)
     BACKEND_URL: str = "http://backend:8000"

@@ -278,7 +278,6 @@ class BearStrategist(BaseAgent):
                             proposal.quantity = total_size
                             await self.think(f"Auto-adjusted Quantity to Full Position: {total_size}", session_id)
 
-            # FORCE SCHEMA COMPLIANCE: Reject if opening action misses mandatory fields BEFORE hitting Reviewer
             if proposal.action in ["LONG", "SHORT", "BUY"]:
                 missing_critical = []
                 if proposal.entry_price is None: missing_critical.append("entry_price")
@@ -286,37 +285,21 @@ class BearStrategist(BaseAgent):
                 if proposal.take_profit is None: missing_critical.append("take_profit")
                 
                 if missing_critical:
-                    # Instead of relying on fallback, we force a retry or fail early if the LLM completely ignored instructions
-                    await self.think(f"CRITICAL SCHEMA ERROR: LLM returned null for {', '.join(missing_critical)} on an opening action. Applying aggressive fallback.", session_id, log_type="error")
-                    
-                    entry = proposal.entry_price if proposal.entry_price else state.market_data.price
-                    proposal.entry_price = entry
-                    
-                    default_sl_pct = 0.02
-                    default_tp_pct = 0.04
-                    if proposal.stop_loss is None:
-                        proposal.stop_loss = entry * (1 - default_sl_pct) if proposal.action in ["LONG", "BUY"] else entry * (1 + default_sl_pct)
-                    if proposal.take_profit is None:
-                        proposal.take_profit = entry * (1 + default_tp_pct) if proposal.action in ["LONG", "BUY"] else entry * (1 - default_tp_pct)
-                    
-                    proposal.assumptions.append("FORCED_SCHEMA_FALLBACK")
-
-            # FAILSAFE: If opening position but SL/TP is missing (likely due to missing ATR)
-            # We apply a default 2% SL and 4% TP to ensure risk management
-            if proposal.action in ["LONG", "SHORT", "BUY"] and (proposal.stop_loss is None or proposal.take_profit is None):
-                 entry = proposal.entry_price if proposal.entry_price else state.market_data.price
-                 if entry > 0:
-                     default_sl_pct = 0.02
-                     default_tp_pct = 0.04
-                     
-                     if proposal.stop_loss is None:
-                         proposal.stop_loss = entry * (1 - default_sl_pct) if proposal.action in ["LONG", "BUY"] else entry * (1 + default_sl_pct)
-                         proposal.assumptions.append("MISSING_ATR_DEFAULT_SL_2%")
-                         await self.think("Applied Failsafe Default SL (2%) due to missing model output.", session_id)
-                         
-                     if proposal.take_profit is None:
-                         proposal.take_profit = entry * (1 + default_tp_pct) if proposal.action in ["LONG", "BUY"] else entry * (1 - default_tp_pct)
-                         proposal.assumptions.append("MISSING_ATR_DEFAULT_TP_4%")
+                    await self.think(
+                        f"CRITICAL SCHEMA ERROR: opening action missing {', '.join(missing_critical)}. Blocking proposal and forcing HOLD.",
+                        session_id,
+                        log_type="error"
+                    )
+                    proposal.action = "HOLD"
+                    proposal.order_type = "MARKET"
+                    proposal.trigger_condition = None
+                    proposal.entry_price = None
+                    proposal.quantity = None
+                    proposal.stop_loss = None
+                    proposal.take_profit = None
+                    proposal.confidence = min(float(proposal.confidence or 0.0), 0.2)
+                    proposal.reasoning = f"BLOCKED_MISSING_FIELDS: {', '.join(missing_critical)}"
+                    proposal.assumptions.append("MISSING_CRITICAL_FIELDS_BLOCK")
 
             if proposal.action == "HOLD":
                 reasoning_text = proposal.reasoning.replace(" || ", "\n")
@@ -383,4 +366,3 @@ class BearStrategist(BaseAgent):
         except Exception as e:
             await self.think(f"Strategy generation failed: {str(e)}", session_id)
             return {}
-

@@ -1,7 +1,10 @@
 import math
 from typing import Any, Dict, List
 import httpx
+import logging
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class MarketIntelService:
@@ -19,8 +22,8 @@ class MarketIntelService:
                 payload = res.json()
                 if isinstance(payload, dict):
                     return payload
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"fetch_ticker_depth failed for {symbol}: {exc}")
         return {"symbol": symbol, "price": 0.0, "spread_pct": 0.0}
 
     async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 120) -> List[Dict[str, Any]]:
@@ -34,8 +37,8 @@ class MarketIntelService:
                 payload = res.json()
                 if isinstance(payload, list):
                     return payload
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"fetch_klines failed for {symbol} {interval}: {exc}")
         return []
 
     def classify_regime(self, klines: List[Dict[str, Any]]) -> Dict[str, Any]:

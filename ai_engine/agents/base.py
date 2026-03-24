@@ -4,7 +4,6 @@ from typing import Dict, Any, Optional
 from model.state import AgentState, AgentLog
 import redis.asyncio as redis
 import json
-import os
 import logging
 from langchain_openai import ChatOpenAI
 from core.config import settings
@@ -90,7 +89,7 @@ class BaseAgent:
             self.logger.info(f"[{self.name}] {content}")
             
             # Persist to Backend DB
-            backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+            backend_url = settings.BACKEND_URL
             if session_id != "default":
                 # Fire and forget (don't await response to block)
                 # But async await is needed. To avoid blocking too much, we use a timeout.

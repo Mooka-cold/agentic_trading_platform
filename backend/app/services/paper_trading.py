@@ -311,6 +311,114 @@ class PaperTradingService:
         }
 
 
+    def get_pending_orders(self, user_id: int = None) -> list[PaperOrder]:
+        """
+        Get all pending (LIMIT/STOP_LIMIT) orders.
+        """
+        account = self.get_or_create_account(user_id)
+        orders = self.db.execute(
+            select(PaperOrder)
+            .where(PaperOrder.account_id == account.id)
+            .where(PaperOrder.status == 'PENDING')
+            .order_by(PaperOrder.created_at.asc())
+        ).scalars().all()
+        return orders
+
+    def place_order(self, symbol: str, side: str, order_type: str, quantity: float, current_price: float, trigger_price: float = None, sl: float = None, tp: float = None, session_id: str = None, order_book: dict = None, user_id: int = 1):
+        """
+        Place an order. If MARKET, execute immediately. If LIMIT/STOP_LIMIT, create PENDING order.
+        """
+        order_type = order_type.upper()
+        if order_type == 'MARKET':
+            return self.execute_market_order(symbol, side, quantity, current_price, sl, tp, session_id, order_book, user_id)
+            
+        account = self.get_or_create_account(user_id)
+        # Calculate intent loosely (actual intent resolved at execution)
+        intent = "OPEN" # Default, can be refined when triggered
+        
+        # Determine the price to store for the order (LIMIT price or STOP trigger)
+        store_price = trigger_price if trigger_price else current_price
+
+        order = PaperOrder(
+            account_id=account.id,
+            symbol=symbol,
+            side=side.upper(),
+            type=order_type,
+            intent=intent,
+            price=Decimal(str(store_price)),
+            quantity=Decimal(str(quantity)),
+            status='PENDING',
+            session_id=session_id
+        )
+        # Store SL/TP in a JSON field if we had one, but since PaperOrder doesn't have sl/tp columns, 
+        # we might need to add them or rely on the trigger execution to fetch them from session.
+        # For MVP, we will execute without SL/TP if it's a limit order, OR we can alter the PaperOrder model.
+        # Given we shouldn't change DB schema heavily right now, we will add them later or just store in intent temporarily.
+        self.db.add(order)
+        self.db.commit()
+        
+        return order, {"status": "PENDING", "order_id": str(order.id), "mode": "LIMIT"}
+
+    def check_and_trigger_pending_orders(self, current_prices: dict):
+        """
+        Called by market_streamer on every new price tick to trigger pending limit orders.
+        """
+        pending_orders = self.db.execute(
+            select(PaperOrder).where(PaperOrder.status == 'PENDING')
+        ).scalars().all()
+        
+        triggered_count = 0
+        for order in pending_orders:
+            if order.symbol not in current_prices:
+                continue
+                
+            curr_price = current_prices[order.symbol]
+            order_price = float(order.price)
+            
+            is_triggered = False
+            if order.type == 'LIMIT':
+                if order.side == 'BUY' and curr_price <= order_price:
+                    is_triggered = True
+                elif order.side == 'SELL' and curr_price >= order_price:
+                    is_triggered = True
+            elif order.type == 'STOP_LIMIT':
+                if order.side == 'BUY' and curr_price >= order_price:
+                    is_triggered = True
+                elif order.side == 'SELL' and curr_price <= order_price:
+                    is_triggered = True
+                    
+            if is_triggered:
+                print(f"[Sim Match] Triggering PENDING {order.type} {order.side} for {order.symbol} at {curr_price} (Target: {order_price})")
+                # Execute as market order at current price
+                try:
+                    # We need to temporarily change status to PROCESSING to avoid double triggers
+                    order.status = 'PROCESSING'
+                    self.db.commit()
+                    
+                    account = self.db.execute(
+                        select(PaperAccount).where(PaperAccount.id == order.account_id)
+                    ).scalar_one_or_none()
+                    trigger_user_id = account.user_id if account and account.user_id is not None else 1
+                    _, exec_info = self.execute_market_order(
+                        symbol=order.symbol,
+                        side=order.side,
+                        quantity=float(order.quantity),
+                        current_price=curr_price,
+                        user_id=trigger_user_id
+                    )
+                    
+                    # Update original order status
+                    order.status = 'FILLED' if exec_info.get("mode") != "UNKNOWN" else 'FAILED'
+                    order.filled_at = datetime.now(timezone.utc)
+                    self.db.commit()
+                    triggered_count += 1
+                except Exception as e:
+                    print(f"[Sim Match] Failed to execute triggered order {order.id}: {e}")
+                    order.status = 'PENDING' # Revert
+                    self.db.commit()
+                    
+        return triggered_count
+
     def execute_market_order(self, symbol: str, side: str, quantity: float, current_price: float, sl: float = None, tp: float = None, session_id: str = None, order_book: dict = None, user_id: int = 1):
         """
         Execute a market order immediately with basic margin and PnL realization.

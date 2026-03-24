@@ -19,6 +19,8 @@ class ExecutionService:
             # Expose paper_service for direct access if needed (e.g. for history)
             self.paper_service = self.adapter.service 
         elif self.mode == "LIVE":
+            if not settings.LIVE_TRADING_ENABLED:
+                raise NotImplementedError("Live trading is disabled (LIVE_TRADING_ENABLED=false)")
             # self.adapter = LiveTradingAdapter(db, user_id)
             raise NotImplementedError("Live Trading not yet implemented")
         else:
@@ -30,6 +32,46 @@ class ExecutionService:
         """
         print(f"[ExecutionService] Routing {side} {quantity} {symbol} to {self.mode} Adapter")
         return self.adapter.execute_order(symbol=symbol, side=side, quantity=quantity, price=price, params=params)
+
+    def place_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: float,
+        current_price: float,
+        trigger_price: Optional[float] = None,
+        sl: Optional[float] = None,
+        tp: Optional[float] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[int] = None,
+    ):
+        if hasattr(self.adapter, "place_order"):
+            return self.adapter.place_order(
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                quantity=quantity,
+                current_price=current_price,
+                trigger_price=trigger_price,
+                sl=sl,
+                tp=tp,
+                session_id=session_id,
+                user_id=user_id if user_id is not None else self.user_id,
+            )
+        params = {
+            "stop_loss": sl,
+            "take_profit": tp,
+            "session_id": session_id,
+        }
+        result = self.execute_order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=current_price,
+            params=params,
+        )
+        return result, {"status": result.get("status"), "order_id": result.get("order_id"), "mode": result.get("mode", "UNKNOWN"), "pnl": result.get("pnl", 0.0)}
 
     def get_balance(self, currency: str = "USDT") -> float:
         return self.adapter.get_balance(currency)

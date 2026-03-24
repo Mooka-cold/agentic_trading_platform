@@ -38,7 +38,7 @@
 *   **Task Queue**: Celery (Async Jobs)
 
 ### Frontend (The Face)
-*   **Framework**: Next.js 14 (App Router), TypeScript
+*   **Framework**: Next.js 16 (App Router), TypeScript
 *   **UI**: Tailwind CSS, Shadcn/ui
 *   **Charts**: Lightweight-charts (TradingView style)
 
@@ -55,7 +55,7 @@
 
 ### 前置要求
 *   Docker & Docker Compose
-*   Node.js 18+
+*   Node.js 20.9+
 *   Python 3.10+
 
 ### 安装步骤
@@ -85,6 +85,34 @@
     npm install
     npm run dev
     ```
+
+## 🔐 依赖安全策略 (Dependency Security)
+
+前端已启用 `package.json -> overrides` 来强制覆盖高风险传递依赖版本，避免钱包生态下游包引入已知漏洞版本。
+
+当前覆盖策略位于：
+
+* `frontend/package.json` 的 `overrides`
+* 典型覆盖项：`h3`、`hono`、`socket.io-parser`
+
+建议在每次依赖升级后执行以下流程：
+
+```bash
+cd frontend
+npm install
+npm audit --omit=dev
+npm run lint
+npm run build
+```
+
+若升级后出现兼容问题，可回滚到上一个稳定锁文件版本（恢复 `package-lock.json`）后重新安装：
+
+```bash
+cd frontend
+npm install
+npm run lint
+npm run build
+```
 
 ## 🤝 贡献 (Contributing)
 欢迎提交 Issue 和 Pull Request！让我们一起构建下一代 AI 交易终端。

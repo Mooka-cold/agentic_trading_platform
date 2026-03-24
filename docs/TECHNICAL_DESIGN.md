@@ -54,11 +54,11 @@ graph TD
 ## 2. 技术栈选型
 
 ### 2.1 前端 (Frontend)
-*   **框架**: **Next.js 14+** (React, App Router)。
+*   **框架**: **Next.js 16+** (React, App Router)。
 *   **语言**: **TypeScript**。
 *   **UI 组件库**: **Shadcn/ui** + **Tailwind CSS**。
 *   **图表库**: **Lightweight-charts** (TradingView 开源的高性能 K 线图库)。
-*   **状态管理**: **Zustand** 或 **React Query** (TanStack Query)。
+*   **状态管理**: **React Query** (TanStack Query) + React Hooks。
 *   **WebSocket**: **Socket.io-client** 或原生 WebSocket (用于接收后端推送的实时行情/信号)。
 
 ### 2.2 后端 (Backend)
@@ -138,6 +138,35 @@ graph TD
 ## 4. 部署方案
 *   **容器化**: 所有服务 (Frontend, Backend, DB, Redis, Freqtrade) 均通过 **Docker Compose** 编排。
 *   **CI/CD**: GitHub Actions 自动化构建和测试。
+*   **前端运行时要求**: Node.js **20.9+**。
+
+### 4.1 依赖安全基线 (Frontend Dependency Security Baseline)
+为降低钱包生态传递依赖带来的安全风险，前端采用 `package.json -> overrides` 固定高风险传递依赖的最低安全版本。
+
+当前安全覆盖策略：
+*   `h3`: `^1.15.10`
+*   `hono`: `^4.12.7`
+*   `socket.io-parser`: `^4.2.6`
+
+### 4.2 升级校验与回滚 (Upgrade Validation & Rollback)
+每次升级 `next`、`wagmi`、`@rainbow-me/rainbowkit` 或锁文件后，执行：
+
+```bash
+cd frontend
+npm install
+npm audit --omit=dev
+npm run lint
+npm run build
+```
+
+若升级后出现兼容问题，回滚到上一个稳定锁文件版本并重新安装依赖：
+
+```bash
+cd frontend
+npm install
+npm run lint
+npm run build
+```
 
 ## 5. 接口设计 (API Endpoints)
 *   `GET /api/v1/market/kline?symbol=BTC/USDT&interval=1h` - 获取 K 线数据

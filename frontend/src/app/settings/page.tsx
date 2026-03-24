@@ -3,6 +3,7 @@
 import { SideNav } from "@/components/layout/SideNav";
 import { useState, useEffect } from "react";
 import { Save, Settings as SettingsIcon, Bell, Key, Clock, Cpu, ShieldAlert } from "lucide-react";
+import { API_BASE_URL } from "@/lib/api/base";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("agent");
@@ -62,24 +63,26 @@ const AgentSettings = () => {
   const [model, setModel] = useState("gpt-4-turbo");
   const [riskLevel, setRiskLevel] = useState("medium");
   const [outputLanguage, setOutputLanguage] = useState("zh");
+  const [sentimentWindowHours, setSentimentWindowHours] = useState("6");
   const [systemPrompt, setSystemPrompt] = useState("You are an expert crypto quant trader...");
   const [loading, setLoading] = useState(false);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
 
   useEffect(() => {
     const fetchConfigs = async () => {
         try {
-            const res = await fetch(`${API_URL}/api/v1/system/config`);
+            const res = await fetch(`${API_BASE_URL}/api/v1/system/config`);
             if (res.ok) {
                 const configs = await res.json();
                 const m = configs.find((c: any) => c.key === "LLM_MODEL");
                 const r = configs.find((c: any) => c.key === "RISK_LEVEL");
                 const p = configs.find((c: any) => c.key === "STRATEGIST_PROMPT");
                 const l = configs.find((c: any) => c.key === "AGENT_OUTPUT_LANGUAGE");
+                const s = configs.find((c: any) => c.key === "SENTIMENT_NEWS_WINDOW_HOURS");
                 if (m) setModel(m.value);
                 if (r) setRiskLevel(r.value);
                 if (p) setSystemPrompt(p.value);
                 if (l) setOutputLanguage(l.value);
+                if (s && s.value) setSentimentWindowHours(s.value);
             }
         } catch (e) { console.error(e); }
     };
@@ -90,25 +93,33 @@ const AgentSettings = () => {
     setLoading(true);
     try {
         const tasks = [
-            fetch(`${API_URL}/api/v1/system/config`, {
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "LLM_MODEL", value: model, description: "LLM Model Name" })
             }),
-            fetch(`${API_URL}/api/v1/system/config`, {
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "RISK_LEVEL", value: riskLevel, description: "Risk Tolerance Level" })
             }),
-            fetch(`${API_URL}/api/v1/system/config`, {
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "STRATEGIST_PROMPT", value: systemPrompt, description: "Strategist System Prompt" })
             }),
-            fetch(`${API_URL}/api/v1/system/config`, {
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "AGENT_OUTPUT_LANGUAGE", value: outputLanguage, description: "Agent Output Language" })
+            }),
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
+                method: "POST", headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                  key: "SENTIMENT_NEWS_WINDOW_HOURS",
+                  value: String(Math.min(72, Math.max(1, Number(sentimentWindowHours) || 6))),
+                  description: "Sentiment News Lookback Window Hours"
+                })
             })
         ];
         await Promise.all(tasks);
-        await fetch(`${API_URL}/api/v1/system/reload`, { method: "POST" });
+        await fetch(`${API_BASE_URL}/api/v1/system/reload`, { method: "POST" });
         alert("Agent settings saved & applied!");
     } catch (e) { alert("Failed to save"); } 
     finally { setLoading(false); }
@@ -171,6 +182,23 @@ const AgentSettings = () => {
 
     <div className="space-y-3">
       <label className="font-bold text-gray-200 flex items-center gap-2">
+        <Clock size={16} className="text-cyan-500" />
+        Sentiment News Window (Hours)
+      </label>
+      <p className="text-sm text-gray-500">Only use news within this time window for sentiment scoring.</p>
+      <input
+        type="number"
+        min={1}
+        max={72}
+        step={1}
+        value={sentimentWindowHours}
+        onChange={(e) => setSentimentWindowHours(e.target.value)}
+        className="w-full bg-[#020617] border border-slate-700 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none text-gray-300 font-mono text-sm"
+      />
+    </div>
+
+    <div className="space-y-3">
+      <label className="font-bold text-gray-200 flex items-center gap-2">
         <ShieldAlert size={16} className="text-red-500" />
         Risk Level
       </label>
@@ -191,16 +219,37 @@ const AgentSettings = () => {
 };
 
 const ScheduleSettings = () => {
-  const [enabled, setEnabled] = useState(false);
   const [interval, setInterval] = useState("1h");
   const [status, setStatus] = useState("Checking...");
   const [isRunning, setIsRunning] = useState(false);
+  const [symbol, setSymbol] = useState("");
+  const [sessionId, setSessionId] = useState("");
 
   // Poll status
   useEffect(() => {
+    let cancelled = false;
+    const fetchSymbols = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/v1/market/symbols`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.symbols) && data.symbols.length > 0) {
+          setSymbol((prev) => (prev && data.symbols.includes(prev) ? prev : data.symbols[0]));
+        }
+      } catch (e) {
+        console.error("Load symbols failed", e);
+      }
+    };
+    fetchSymbols();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const checkStatus = async () => {
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
+            const apiUrl = API_BASE_URL;
             const res = await fetch(`${apiUrl}/api/v1/workflow/runner/status`);
             if (res.ok) {
                 const data = await res.json();
@@ -221,11 +270,17 @@ const ScheduleSettings = () => {
 
   const handleStart = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
+      const apiUrl = API_BASE_URL;
+      const normalizedSymbol = (symbol || "").trim();
+      if (!normalizedSymbol) {
+        alert("请先选择或输入交易对");
+        return;
+      }
+      const normalizedSessionId = (sessionId || `continuous-${Date.now()}`).trim() || `continuous-${Date.now()}`;
       const res = await fetch(`${apiUrl}/api/v1/workflow/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: "BTC/USDT", session_id: "continuous-1" })
+        body: JSON.stringify({ symbol: normalizedSymbol, session_id: normalizedSessionId })
       });
       if (res.ok) alert("Started Continuous Mode");
     } catch (e) { alert("Failed to start"); }
@@ -233,7 +288,7 @@ const ScheduleSettings = () => {
 
   const handleStop = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
+      const apiUrl = API_BASE_URL;
       const res = await fetch(`${apiUrl}/api/v1/workflow/stop`, {
         method: "POST"
       });
@@ -274,6 +329,23 @@ const ScheduleSettings = () => {
         <div className="border-t border-slate-800 my-6"></div>
 
         {/* Legacy Schedule Config (Optional) */}
+        <div className="space-y-3">
+            <h3 className="font-bold text-white mb-2 text-sm">Loop Runtime Parameters</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input
+                    className="bg-[#020617] border border-slate-700 rounded-lg p-2 text-sm text-slate-200"
+                    value={symbol}
+                    onChange={(e) => setSymbol(e.target.value)}
+                    placeholder="BTC/USDT"
+                />
+                <input
+                    className="bg-[#020617] border border-slate-700 rounded-lg p-2 text-sm text-slate-200"
+                    value={sessionId}
+                    onChange={(e) => setSessionId(e.target.value)}
+                    placeholder="continuous-<timestamp>"
+                />
+            </div>
+        </div>
         <div className="opacity-50 pointer-events-none">
             <h3 className="font-bold text-white mb-2 text-sm">Legacy Scheduler Config</h3>
             <div className="flex gap-4">
@@ -296,12 +368,11 @@ const NewsSettings = () => {
   const [twitterKey, setTwitterKey] = useState("");
   const [cryptoPanicToken, setCryptoPanicToken] = useState("");
   const [loading, setLoading] = useState(false);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
 
   useEffect(() => {
     const fetchConfigs = async () => {
         try {
-            const res = await fetch(`${API_URL}/api/v1/system/config`);
+            const res = await fetch(`${API_BASE_URL}/api/v1/system/config`);
             if (res.ok) {
                 const configs = await res.json();
                 const n = configs.find((c: any) => c.key === "NEWS_API_KEY");
@@ -320,21 +391,21 @@ const NewsSettings = () => {
     setLoading(true);
     try {
         const tasks = [
-            fetch(`${API_URL}/api/v1/system/config`, {
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "NEWS_API_KEY", value: newsKey, description: "News API Key" })
             }),
-            fetch(`${API_URL}/api/v1/system/config`, {
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "TWITTER_API_KEY", value: twitterKey, description: "Twitter/X API Key" })
             }),
-            fetch(`${API_URL}/api/v1/system/config`, {
+            fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "CRYPTOPANIC_API_KEY", value: cryptoPanicToken, description: "CryptoPanic API Token" })
             })
         ];
         await Promise.all(tasks);
-        await fetch(`${API_URL}/api/v1/system/reload`, { method: "POST" });
+        await fetch(`${API_BASE_URL}/api/v1/system/reload`, { method: "POST" });
         alert("News settings saved & applied!");
     } catch (e) { alert("Failed to save"); } 
     finally { setLoading(false); }
@@ -383,12 +454,11 @@ const ApiSettings = () => {
   const [openaiKey, setOpenaiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
   const [loading, setLoading] = useState(false);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3201';
 
   useEffect(() => {
     const fetchConfigs = async () => {
         try {
-            const res = await fetch(`${API_URL}/api/v1/system/config`);
+            const res = await fetch(`${API_BASE_URL}/api/v1/system/config`);
             if (res.ok) {
                 const configs = await res.json();
                 const openaiConfig = configs.find((c: any) => c.key === "OPENAI_API_KEY");
@@ -406,19 +476,19 @@ const ApiSettings = () => {
     try {
         const tasks = [];
         if (openaiKey) {
-            tasks.push(fetch(`${API_URL}/api/v1/system/config`, {
+            tasks.push(fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "OPENAI_API_KEY", value: openaiKey, description: "OpenAI API Key" })
             }));
         }
         if (baseUrl) {
-            tasks.push(fetch(`${API_URL}/api/v1/system/config`, {
+            tasks.push(fetch(`${API_BASE_URL}/api/v1/system/config`, {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ key: "OPENAI_API_BASE", value: baseUrl, description: "OpenAI Compatible Base URL" })
             }));
         }
         await Promise.all(tasks);
-        await fetch(`${API_URL}/api/v1/system/reload`, { method: "POST" });
+        await fetch(`${API_BASE_URL}/api/v1/system/reload`, { method: "POST" });
         alert("Settings saved & applied!");
     } catch (e) {
         alert("Failed to save settings.");

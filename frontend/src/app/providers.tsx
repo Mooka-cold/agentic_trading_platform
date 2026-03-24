@@ -28,7 +28,7 @@ const config = getDefaultConfig({
     base,
     sepolia,
   ],
-  ssr: true,
+  ssr: false,
 });
 
 const queryClient = new QueryClient();

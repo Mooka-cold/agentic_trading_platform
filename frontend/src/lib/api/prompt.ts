@@ -4,6 +4,7 @@ export interface AgentConfigResponse {
   agent: string;
   variant: string;
   config: Record<string, any>;
+  default_prompt?: string;
 }
 
 export const PromptAPI = {

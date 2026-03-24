@@ -14,12 +14,18 @@ async def reload_ai_engine():
     """Trigger AI Engine to reload configuration"""
     async with httpx.AsyncClient() as client:
         try:
-            # Ensure AI_ENGINE_URL is set in backend env
-            url = f"{settings.AI_ENGINE_URL}/workflow/reload"
-            resp = await client.post(url)
-            if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail="AI Engine returned error")
-            return resp.json()
+            workflow_url = f"{settings.AI_ENGINE_URL}/workflow/reload"
+            sentiment_url = f"{settings.AI_ENGINE_URL}/sentiment/reload-config"
+            workflow_resp = await client.post(workflow_url)
+            sentiment_resp = await client.post(sentiment_url)
+            if workflow_resp.status_code != 200:
+                raise HTTPException(status_code=workflow_resp.status_code, detail="AI Engine workflow reload failed")
+            if sentiment_resp.status_code != 200:
+                raise HTTPException(status_code=sentiment_resp.status_code, detail="AI Engine sentiment reload failed")
+            return {
+                "workflow": workflow_resp.json(),
+                "sentiment": sentiment_resp.json()
+            }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to reload AI Engine: {e}")
 

@@ -8,6 +8,7 @@ from app.services.ai_client import run_analysis_cycle
 from app.services.monitor import PositionMonitorService
 from app.db.session import SessionLocalUser
 from app.core.config import settings
+from shared.core.symbols import get_schedule_symbols_from_env
 
 router = APIRouter()
 
@@ -25,7 +26,7 @@ class MarketBackfillRequest(BaseModel):
 
 @router.post("/sync-market")
 async def sync_market(req: MarketSyncRequest):
-    symbols = req.symbols or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+    symbols = req.symbols or get_schedule_symbols_from_env()
     timeframes = req.timeframes or ["1m"]
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(
@@ -44,7 +45,7 @@ async def sync_news():
 
 @router.post("/analyze")
 async def analyze(req: AnalyzeRequest | None = Body(default=None)):
-    symbols = (req.symbols if req else None) or ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
+    symbols = (req.symbols if req else None) or get_schedule_symbols_from_env()
     await run_analysis_cycle(symbols)
     return {"status": "success", "symbols": symbols}
 

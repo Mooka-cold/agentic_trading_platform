@@ -68,14 +68,7 @@ class Reflector(BaseAgent):
                 
                 if order_id:
                     await self.run_immediate_review(order_id, state.execution_result, session_id)
-                    
-                    # Schedule future reviews
-                    # For MVP, we can't easily schedule persistent tasks here without Celery/APScheduler.
-                    # We will rely on an external "Watcher" or Cron that calls /workflow/review/periodic
-                    # But we should log that this order needs future review.
-                    # Ideally, store in DB: "pending_reviews" table? 
-                    # Or simpler: The Cron job just scans for all orders closed > 1h ago that don't have T+1H reflection yet.
-                    pass
+                    await self.think(f"Immediate review completed for order {order_id}", session_id)
 
             except Exception as e:
                 await self.think(f"Immediate review failed: {e}", session_id)

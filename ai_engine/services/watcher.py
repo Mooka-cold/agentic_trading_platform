@@ -18,45 +18,34 @@ class WatcherService:
         self.task = asyncio.create_task(self._listen())
 
     async def _listen(self):
-        logger.info("Subscribing to Redis channel: market_signals")
-        stream = redis_stream.subscribe_channel("market_signals")
-        
-        try:
-            async for message in stream:
-                if not self.is_running: break
-                
-                try:
-                    # message is already a JSON string from Redis
-                    data = json.loads(message)
-                    symbol = data.get("symbol")
-                    signals = data.get("signals")
-                    
-                    if symbol and signals:
-                        # Check if Continuous Mode is active
-                        if not self.workflow_engine.is_running:
-                            # logger.debug(f"Watcher ignored signal for {symbol} (Loop Stopped)")
-                            continue
-
-                        logger.info(f"Watcher received signal for {symbol}: {signals}")
-                        
-                        # Trigger Workflow
-                        # Use a unique session ID for this trigger
-                        # We use 'signal-' prefix to distinguish from 'continuous-' sessions
-                        import time
-                        session_id = f"signal-{symbol}-{int(time.time())}"
-                        
-                        # Run workflow asynchronously
-                        # Note: run_workflow checks for locks, so it's safe to call concurrently
-                        asyncio.create_task(
-                            self.workflow_engine.run_workflow(symbol, session_id)
-                        )
-                except json.JSONDecodeError:
-                    logger.error(f"Invalid JSON in market_signals: {message}")
-                except Exception as e:
-                    logger.error(f"Error processing signal: {e}")
-        except Exception as e:
-            logger.error(f"Redis stream error: {e}")
-            # Retry logic could be added here
+        reconnect_delay = 2
+        while self.is_running:
+            try:
+                logger.info("Subscribing to Redis channel: market_signals")
+                stream = redis_stream.subscribe_channel("market_signals")
+                async for message in stream:
+                    if not self.is_running:
+                        break
+                    try:
+                        data = json.loads(message)
+                        symbol = data.get("symbol")
+                        signals = data.get("signals")
+                        if symbol and signals:
+                            if not self.workflow_engine.is_running:
+                                continue
+                            logger.info(f"Watcher received signal for {symbol}: {signals}")
+                            import time
+                            session_id = f"signal-{symbol}-{int(time.time())}"
+                            asyncio.create_task(self.workflow_engine.run_workflow(symbol, session_id))
+                    except json.JSONDecodeError:
+                        logger.error(f"Invalid JSON in market_signals: {message}")
+                    except Exception as e:
+                        logger.error(f"Error processing signal: {e}")
+                reconnect_delay = 2
+            except Exception as e:
+                logger.error(f"Redis stream error: {e}. Reconnecting in {reconnect_delay}s")
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 30)
 
     async def stop(self):
         self.is_running = False
@@ -65,5 +54,5 @@ class WatcherService:
             try:
                 await self.task
             except asyncio.CancelledError:
-                pass
+                logger.info("Watcher background task cancelled.")
         logger.info("Watcher Service Stopped.")

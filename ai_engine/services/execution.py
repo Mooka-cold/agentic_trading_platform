@@ -1,5 +1,6 @@
 import httpx
 import asyncio
+import hashlib
 from typing import Dict, Any
 from core.config import settings
 
@@ -33,7 +34,7 @@ class ExecutionService:
             
         return await self._send_to_backend(
             action, symbol, quantity, price, confidence,
-            session_id, stop_loss, take_profit, order_type, trigger_condition
+            session_id, stop_loss, take_profit, order_type, trigger_condition, "single"
         )
 
     async def _execute_twap(
@@ -58,7 +59,7 @@ class ExecutionService:
             print(f"[Execution] Order too small for TWAP (qty={quantity}, min_qty={min_qty:.4f}). Executing as STANDARD.")
             return await self._send_to_backend(
                 action, symbol, quantity, price, confidence,
-                session_id, stop_loss, take_profit, order_type, trigger_condition
+                session_id, stop_loss, take_profit, order_type, trigger_condition, "twap-single"
             )
             
         chunk_size = round(quantity / chunks, 4)
@@ -75,7 +76,7 @@ class ExecutionService:
             
             result = await self._send_to_backend(
                 action, symbol, current_qty, price, confidence,
-                session_id, stop_loss, take_profit, order_type, trigger_condition
+                session_id, stop_loss, take_profit, order_type, trigger_condition, f"twap-{i+1}"
             )
             
             if result.get("status") == "FILLED" or result.get("status") == "ACCEPTED":
@@ -110,8 +111,11 @@ class ExecutionService:
         stop_loss: float = None,
         take_profit: float = None,
         order_type: str = "MARKET",
-        trigger_condition: str = None
+        trigger_condition: str = None,
+        idempotency_suffix: str = "single"
     ) -> Dict[str, Any]:
+        idempotency_raw = f"{session_id}|{action}|{symbol}|{quantity}|{price}|{order_type}|{trigger_condition or ''}|{idempotency_suffix}"
+        idempotency_key = hashlib.sha256(idempotency_raw.encode("utf-8")).hexdigest()
         payload = {
             "action": action,
             "symbol": symbol,
@@ -122,7 +126,8 @@ class ExecutionService:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "order_type": order_type,
-            "trigger_condition": trigger_condition
+            "trigger_condition": trigger_condition,
+            "idempotency_key": idempotency_key
         }
         
         try:

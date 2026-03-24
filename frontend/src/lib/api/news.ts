@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from "./base";
 
 export interface NewsItem {
   id: string;
@@ -13,7 +13,7 @@ export interface NewsItem {
 export const NewsAPI = {
   getLatestNews: async (limit: number = 20): Promise<NewsItem[]> => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/news/?limit=${limit}`);
+      const res = await fetch(`${API_BASE_URL}/api/v1/news/?limit=${limit}`);
       if (!res.ok) {
         console.error('API Error:', res.statusText);
         return [];

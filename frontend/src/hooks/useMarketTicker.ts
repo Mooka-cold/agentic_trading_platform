@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_BASE_URL } from '@/lib/api/base';
 
 export interface TickerData {
   symbol: string;
@@ -27,20 +28,30 @@ export const useMarketTicker = (symbol: string = 'BTC/USDT') => {
   
   useEffect(() => {
     let isMounted = true;
+    if (!symbol || !symbol.trim()) {
+      return () => {
+        isMounted = false;
+      };
+    }
     
     const fetchTicker = async () => {
       try {
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-        const res = await fetch(`${apiBase}/api/v1/market/ticker?symbol=${encodeURIComponent(symbol)}&levels=8`);
+        const res = await fetch(`${API_BASE_URL}/api/v1/market/ticker?symbol=${encodeURIComponent(symbol)}&levels=8`);
         
         if (res.ok && isMounted) {
             const data = await res.json();
             if (data.price > 0) {
                 setTicker(data);
+            } else {
+                setTicker(null);
             }
+        } else if (isMounted) {
+            setTicker(null);
         }
       } catch (e) {
-        // console.error("Ticker fetch error", e);
+        if (isMounted) {
+          setTicker(null);
+        }
       }
     };
 

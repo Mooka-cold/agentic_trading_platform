@@ -120,15 +120,9 @@ class SentimentAgent(BaseAgent):
         return {"queued": queued, "claimed": len(pending), **stats}
 
     async def run_daily_review(self, symbol: str = "BTC/USDT"):
-        """
-        Perform T+1 analysis on closed trades.
-        """
         session_id = f"review-{datetime.now().strftime('%Y%m%d')}"
-        # We need a dedicated Reflector for this, not SentimentAgent. 
-        # But for MVP, let's assume this method is called by Reflector or Orchestrator.
-        # Wait, I put this in SentimentAgent by mistake in previous toolcall!
-        # I must move it to Reflector class.
-        pass
+        await self.think(f"Daily review is handled by reflector pipeline, skip sentiment review for {symbol}.", session_id)
+        return {"status": "skipped", "owner": "reflector", "symbol": symbol, "session_id": session_id}
 
     async def run(self, state: AgentState) -> dict:
         from services.market_data import market_data_service
@@ -141,6 +135,12 @@ class SentimentAgent(BaseAgent):
         # 1. Fetch Data
         try:
             fng = await sentiment_service.get_fear_greed_index()
+            if not fng:
+                await self.think("⚠️ WARNING: Fear & Greed API failed or returned empty data.", session_id, log_type="error")
+                fng = {"value": 50, "classification": "Neutral", "is_stale": True}
+            elif fng.get("is_stale"):
+                await self.think("⚠️ WARNING: Fear & Greed data is STALE (>48h old).", session_id, log_type="error")
+                
             news = await sentiment_service.get_latest_news(
                 symbol,
                 limit=600,
@@ -160,6 +160,8 @@ class SentimentAgent(BaseAgent):
             rule_packet = sentiment_service.build_rule_packet(news[:100], fng)
             
             fear_greed_str = f"Index: {fng['value']} ({fng['classification']})"
+            if fng.get("is_stale"):
+                fear_greed_str = "[DATA STALE] " + fear_greed_str
             # Format news for LLM context
             news_str = "\n".join([
                 f"- [{n['source']}] {n['title']} (Positive: {n['votes'].get('positive',0)})" 

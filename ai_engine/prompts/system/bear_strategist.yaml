@@ -36,7 +36,7 @@ template: |
      - If Market Bias supports position -> HOLD.
      - **CRITICAL**: For SELL/COVER actions, you MUST specify the exact `quantity` to close. Use the full size from Current Positions.
   3. If no position exists (FLAT):
-     - If Market Bias is BULLISH -> OPEN LONG (action: "LONG").
+     - If Market Bias is BULLISH -> HOLD and wait for a better short setup.
      - If Market Bias is BEARISH -> OPEN SHORT (action: "SHORT").
      - Otherwise -> HOLD.
 
@@ -50,7 +50,7 @@ template: |
   - **MISSING DATA HANDLING**:
     - If ATR is missing or cannot be calculated, you MUST explicitly state "MISSING_ATR" in the `assumptions` list.
     - In this case, use a default Stop Loss of 2.0% from Entry Price.
-    - DO NOT output null for stop_loss/take_profit if you are opening a position (LONG/SHORT).
+    - DO NOT output null for stop_loss/take_profit if you are opening a position (SHORT/SELL).
   - **SELF-CHECK**: Before outputting, verify: Is |Entry - Stop_Loss| < 1.5 * ATR? If yes, WIDEN the stop loss.
   - Confidence Anchors (MANDATORY):
     - 0.80~1.00: Multi-signal alignment (trend, momentum, volatility, sentiment) with no major contradiction.

@@ -144,10 +144,56 @@ class Reviewer(BaseAgent):
             gate_mode = str(getattr(state.sentiment_report, "trade_gate", "normal") or "normal")
             gate_reason = getattr(state.sentiment_report, "trigger_reason", None)
         execution_constraints = state.execution_constraints or {}
+        data_quality = str(execution_constraints.get("data_quality", "ok") or "ok")
+        data_quality_reasons = execution_constraints.get("data_quality_reasons", [])
+        if is_opening and data_quality == "blocked_no_price":
+            verdict = RiskVerdict(
+                approved=False,
+                risk_score=95.0,
+                message="Blocked by data quality guard: no reliable price snapshot.",
+                reject_code="DATA_QUALITY_BLOCKED",
+                fix_suggestions={"required": ["reliable_market_price"]},
+                checks={"data_quality": "FAIL"}
+            )
+            await self.say(
+                f"REJECTED [{verdict.reject_code}]. {verdict.message}",
+                session_id,
+                artifact={
+                    "verdict": "REJECTED",
+                    "code": verdict.reject_code,
+                    "data_quality": data_quality,
+                    "data_quality_reasons": data_quality_reasons
+                }
+            )
+            return {
+                "risk_verdict": verdict,
+                "review_feedback": {
+                    "reject_code": verdict.reject_code,
+                    "message": verdict.message,
+                    "fix_suggestions": verdict.fix_suggestions,
+                    "checks": verdict.checks
+                }
+            }
         gate_policy = execution_constraints.get("gate_policy", {})
         review_only_policy = gate_policy.get("review_only", {"qty_mult": 0.25, "sl_widen_mult": 1.5})
         risk_reduced_policy = gate_policy.get("risk_reduced", {"qty_mult": 0.5, "sl_widen_mult": 1.25})
         rr_floor = float(execution_constraints.get("rr_floor", 1.5) or 1.5)
+        if is_opening and data_quality != "ok":
+            original_qty = proposal.quantity
+            if proposal.quantity is not None:
+                proposal.quantity = max(0.0, proposal.quantity * 0.5)
+            rr_floor = max(rr_floor, 1.6)
+            await self.say(
+                f"DATA_QUALITY_GUARD: {data_quality} | Qty {original_qty} -> {proposal.quantity} | RR floor -> {rr_floor}",
+                session_id,
+                artifact={
+                    "data_quality": data_quality,
+                    "data_quality_reasons": data_quality_reasons,
+                    "quantity_before": original_qty,
+                    "quantity_after": proposal.quantity,
+                    "rr_floor": rr_floor
+                }
+            )
         
         if is_opening:
             await self.say(
@@ -622,8 +668,32 @@ class Reviewer(BaseAgent):
                 # --- Execute Order ---
                 await self.think("Routing order to Execution Engine...", session_id)
                 try:
-                    # Check if adjusted_size is mandated
-                    final_quantity = verdict.adjusted_size if verdict.adjusted_size else (proposal.quantity or 0.001)
+                    final_quantity = verdict.adjusted_size if verdict.adjusted_size is not None else proposal.quantity
+                    if final_quantity is None or final_quantity <= 0:
+                        verdict.approved = False
+                        verdict.reject_code = "INVALID_EXECUTION_SIZE"
+                        verdict.message = "Execution blocked: quantity is missing or non-positive."
+                        verdict.checks = {**(verdict.checks or {}), "quantity": "FAIL"}
+                        verdict.fix_suggestions = {**(verdict.fix_suggestions or {}), "required_fields": ["quantity"]}
+                        await self.say(
+                            f"REJECTED [{verdict.reject_code}]. {verdict.message}",
+                            session_id,
+                            artifact={
+                                "verdict": "REJECTED",
+                                "code": verdict.reject_code,
+                                "quantity": final_quantity
+                            },
+                            symbol=state.market_data.symbol
+                        )
+                        return {
+                            "risk_verdict": verdict,
+                            "review_feedback": {
+                                "reject_code": verdict.reject_code,
+                                "message": verdict.message,
+                                "fix_suggestions": verdict.fix_suggestions,
+                                "checks": verdict.checks
+                            }
+                        }
                     if verdict.adjusted_size:
                          await self.think(f"Applying Risk-Adjusted Size: {final_quantity}", session_id)
 
@@ -682,4 +752,3 @@ class Reviewer(BaseAgent):
         except Exception as e:
             await self.think(f"Risk check failed: {str(e)}", session_id)
             return {}
-

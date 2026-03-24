@@ -4,7 +4,8 @@ import { useKlines } from "@/hooks/useKlines";
 import { useMarketTicker } from "@/hooks/useMarketTicker";
 import { useSecondSeries } from "@/hooks/useSecondSeries";
 import { KlineChart } from "@/components/ui/KlineChart";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { API_BASE_URL } from "@/lib/api/base";
 
 interface MarketChartProps {
   symbol: string;
@@ -13,9 +14,29 @@ interface MarketChartProps {
 
 export default function MarketChartFeature({ symbol, onSymbolChange }: MarketChartProps) {
   const [interval, setInterval] = useState("1m");
+  const [symbolOptions, setSymbolOptions] = useState<string[]>([]);
   const { data, loading, error } = useKlines(symbol, interval);
   const ticker = useMarketTicker(symbol);
   const secondSeries = useSecondSeries(symbol, 600);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSymbols = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/v1/market/symbols`);
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!cancelled && Array.isArray(payload.symbols) && payload.symbols.length > 0) {
+          setSymbolOptions(payload.symbols);
+        }
+      } catch (_) {
+      }
+    };
+    fetchSymbols();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (error) return <div className="text-red-500">Error: {error}</div>;
 
@@ -42,10 +63,9 @@ export default function MarketChartFeature({ symbol, onSymbolChange }: MarketCha
             onChange={(e) => onSymbolChange?.(e.target.value)}
             className="p-1 text-xs border border-slate-700 rounded bg-slate-800 text-slate-300 focus:outline-none focus:border-blue-500"
           >
-            <option value="BTC/USDT">BTC/USDT</option>
-            <option value="ETH/USDT">ETH/USDT</option>
-            <option value="SOL/USDT">SOL/USDT</option>
-            <option value="BNB/USDT">BNB/USDT</option>
+            {symbolOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
           </select>
         </div>
       </div>

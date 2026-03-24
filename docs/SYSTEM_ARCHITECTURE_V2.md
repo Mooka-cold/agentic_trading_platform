@@ -130,6 +130,36 @@ SELECT create_hypertable('market_klines', 'time');
     *   `strategy-worker`: 10+ Replicas (CPU Intensive).
     *   `crawler-worker`: StatefulSet (Partitioned by symbols).
 
+### 4.3 Frontend Dependency Security Baseline
+*   Frontend runtime baseline:
+    *   **Next.js 16+**
+    *   **Node.js 20.9+**
+*   Frontend enforces security patches for transitive dependencies through `frontend/package.json -> overrides`.
+*   Current forced minimum safe versions:
+    *   `h3`: `^1.15.10`
+    *   `hono`: `^4.12.7`
+    *   `socket.io-parser`: `^4.2.6`
+
+### 4.4 Upgrade Validation & Rollback SOP
+After any upgrade to `next`, wallet stack (`wagmi`, `@rainbow-me/rainbowkit`), or lockfile refresh:
+
+```bash
+cd frontend
+npm install
+npm audit --omit=dev
+npm run lint
+npm run build
+```
+
+If compatibility issues occur, revert to the last stable lockfile and re-run install + checks:
+
+```bash
+cd frontend
+npm install
+npm run lint
+npm run build
+```
+
 ---
 
 ## 5. Implementation Roadmap
