@@ -1,5 +1,4 @@
 import httpx
-import os
 import asyncio
 import hashlib
 import json
@@ -12,7 +11,7 @@ from core.config import settings
 class SentimentService:
     def __init__(self):
         self.fear_greed_url = "https://api.alternative.me/fng/?limit=1"
-        self.backend_url = os.getenv("BACKEND_URL", "http://backend:8000")
+        self.backend_url = settings.BACKEND_URL
         # Connect to User DB to fetch News (Fallback)
         self.engine = create_engine(settings.DATABASE_USER_URL)
         self.source_weights = {
@@ -48,6 +47,7 @@ class SentimentService:
             "other_related": 0.4
         }
         self.taxonomy_version = "taxonomy_v1"
+        self.news_window_hours = 6
         self.cluster_defaults = {
             "CRYPTO_MAJOR": {"weight": 1.0},
             "CRYPTO_L1": {"weight": 0.9},
@@ -99,13 +99,26 @@ class SentimentService:
         query = text("SELECT value FROM system_configs WHERE key = :key LIMIT 1")
         try:
             with self.engine.connect() as conn:
-                row = conn.execute(query, {"key": "SENTIMENT_TUNING_PARAMS"}).first()
-            if row and row[0]:
-                loaded = json.loads(row[0])
-                return self.apply_tuning_params(loaded)
+                tuning_row = conn.execute(query, {"key": "SENTIMENT_TUNING_PARAMS"}).first()
+                window_row = conn.execute(query, {"key": "SENTIMENT_NEWS_WINDOW_HOURS"}).first()
+            if window_row and window_row[0]:
+                try:
+                    self.news_window_hours = max(1, min(72, int(str(window_row[0]).strip())))
+                except Exception:
+                    self.news_window_hours = 6
+            else:
+                self.news_window_hours = 6
+            if tuning_row and tuning_row[0]:
+                loaded = json.loads(tuning_row[0])
+                normalized = self.apply_tuning_params(loaded)
+                normalized["news_window_hours"] = self.news_window_hours
+                return normalized
         except Exception as e:
             print(f"[Sentiment] Load tuning params failed: {e}")
-        return self.apply_tuning_params(None)
+        self.news_window_hours = 6
+        normalized = self.apply_tuning_params(None)
+        normalized["news_window_hours"] = self.news_window_hours
+        return normalized
 
     def get_active_tuning_params(self) -> Dict[str, Any]:
         return {
@@ -114,13 +127,14 @@ class SentimentService:
             "exclude_insufficient_evidence": self.exclude_insufficient_evidence,
             "exclude_low_severity": self.exclude_low_severity,
             "min_magnitude": self.min_magnitude_floor,
-            "relevance_weights": dict(self.relevance_weights)
+            "relevance_weights": dict(self.relevance_weights),
+            "news_window_hours": self.news_window_hours
         }
 
     async def get_fear_greed_index(self) -> Dict:
         """
         Fetch Fear & Greed Index from Alternative.me
-        Returns: {value: int, classification: str}
+        Returns: {value: int, classification: str, is_stale: bool}
         """
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -128,69 +142,110 @@ class SentimentService:
                 if resp.status_code == 200:
                     data = resp.json()
                     item = data['data'][0]
+                    
+                    # Check freshness
+                    timestamp = int(item.get('timestamp', 0))
+                    import time
+                    is_stale = False
+                    if timestamp > 0:
+                        # If data is older than 48 hours (F&G updates daily)
+                        if time.time() - timestamp > 48 * 3600:
+                            is_stale = True
+                            
                     return {
                         "value": int(item['value']),
-                        "classification": item['value_classification']
+                        "classification": item['value_classification'],
+                        "is_stale": is_stale
                     }
         except Exception as e:
             print(f"[Sentiment] Fear & Greed fetch failed: {e}")
         
-        return {"value": 50, "classification": "Neutral"}
+        # Don't mock silently. Return None so agent knows it failed.
+        return None
 
-    async def get_latest_news(self, symbol: str = "BTC", limit: int = 10, trigger_fetch: bool = True) -> List[Dict]:
+    async def get_latest_news(self, symbol: str = "BTC", limit: int = 10, trigger_fetch: bool = True, within_hours: Optional[int] = None) -> List[Dict]:
         """
         Trigger Backend to fetch latest news, then read from DB.
         """
         # 1. Trigger Fetch
+        fetch_failed = False
         if trigger_fetch:
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(f"{self.backend_url}/api/v1/news/fetch", params={"symbol": symbol})
+                    resp = await client.post(f"{self.backend_url}/api/v1/news/fetch", params={"symbol": symbol})
+                    if resp.status_code != 200:
+                        fetch_failed = True
+                        print(f"[Sentiment] Warning: News fetch API returned {resp.status_code}")
             except Exception as e:
+                fetch_failed = True
                 print(f"[Sentiment] Warning: Failed to trigger news fetch: {e}")
 
         # 2. Read from DB
-        query = text("""
-            SELECT id, title, source, published_at, url, summary
-            FROM news 
-            ORDER BY published_at DESC 
-            LIMIT :limit
-        """)
+        filter_hours = max(1, int(within_hours)) if within_hours is not None else None
+        if filter_hours is not None:
+            query = text("""
+                SELECT id, title, source, published_at, url, summary
+                FROM news
+                WHERE published_at >= NOW() - (:within_hours || ' hours')::interval
+                ORDER BY published_at DESC
+                LIMIT :limit
+            """)
+            params = {"limit": limit, "within_hours": filter_hours}
+        else:
+            query = text("""
+                SELECT id, title, source, published_at, url, summary
+                FROM news
+                ORDER BY published_at DESC
+                LIMIT :limit
+            """)
+            params = {"limit": limit}
         
         try:
             with self.engine.connect() as conn:
-                result = conn.execute(query, {"limit": limit}).fetchall()
-            
-            if not result:
-                return []
-
-            # Parse votes from summary if possible, or mock
-            # Our backend crawler stores votes string in summary: "Votes: +10/-2"
-            # BUT NewsAPI stores actual description in summary.
+                result = conn.execute(query, params).fetchall()
             
             news_items = []
-            for row in result:
-                votes = {"positive": 0, "negative": 0}
-                # If summary looks like votes, parse it (legacy CryptoPanic)
-                if row.summary and "Votes:" in row.summary:
-                    try:
-                        parts = row.summary.replace("Votes: ", "").split("/")
-                        if len(parts) == 2:
-                            votes["positive"] = int(parts[0].replace("+", ""))
-                            votes["negative"] = int(parts[1].replace("-", ""))
-                    except:
-                        pass
+            if result:
+                # Parse votes from summary if possible, or mock
+                # Our backend crawler stores votes string in summary: "Votes: +10/-2"
+                # BUT NewsAPI stores actual description in summary.
                 
-                news_items.append({
-                    "id": str(row.id),
-                    "title": row.title,
-                    "source": row.source,
-                    "published_at": str(row.published_at),
-                    "domain": row.source, 
-                    "url": row.url,
-                    "votes": votes,
-                    "summary": row.summary # Pass summary to Agent if needed
+                for row in result:
+                    votes = {"positive": 0, "negative": 0}
+                    # If summary looks like votes, parse it (legacy CryptoPanic)
+                    if row.summary and "Votes:" in row.summary:
+                        try:
+                            parts = row.summary.replace("Votes: ", "").split("/")
+                            if len(parts) == 2:
+                                votes["positive"] = int(parts[0].replace("+", ""))
+                                votes["negative"] = int(parts[1].replace("-", ""))
+                        except Exception as parse_exc:
+                            print(f"[Sentiment] Votes parse failed for news {row.id}: {parse_exc}")
+                    
+                    news_items.append({
+                        "id": str(row.id),
+                        "title": row.title,
+                        "source": row.source,
+                        "published_at": str(row.published_at),
+                        "domain": row.source, 
+                        "url": row.url,
+                        "votes": votes,
+                        "summary": row.summary # Pass summary to Agent if needed
+                    })
+            
+            # Inject warning if fetch failed and we have no fresh data
+            if fetch_failed and (not news_items or filter_hours is not None):
+                news_items.insert(0, {
+                    "id": "system_warning",
+                    "title": "⚠️ SYSTEM WARNING: Failed to fetch latest news from external sources. The following data might be stale or empty.",
+                    "source": "System",
+                    "published_at": "",
+                    "domain": "System",
+                    "url": "",
+                    "votes": {"positive": 0, "negative": 0},
+                    "summary": ""
                 })
+                
             return news_items
             
         except Exception as e:
@@ -535,9 +590,9 @@ class SentimentService:
             deduped.append(row)
         return deduped, max(0, len(rows) - len(deduped))
 
-    def aggregate_interpreted_news(self, target_symbol: str, fng: Dict) -> Dict:
+    def aggregate_interpreted_news(self, target_symbol: str, fng: Dict, lookback_hours: int = 24) -> Dict:
         base_asset = target_symbol.split("/")[0].upper()
-        rows_all = self.load_interpreted_news(target_symbol=target_symbol, limit=500, lookback_hours=24)
+        rows_all = self.load_interpreted_news(target_symbol=target_symbol, limit=500, lookback_hours=max(1, lookback_hours))
         quality_rows = []
         for row in rows_all:
             conf = self._clamp(float(row.get("confidence") or 0.0), 0.0, 1.0)

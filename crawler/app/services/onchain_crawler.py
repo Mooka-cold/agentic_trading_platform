@@ -3,7 +3,6 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from shared.models.onchain import OnChainMetric
 import logging
-import random # For fallback
 
 logger = logging.getLogger(__name__)
 
@@ -23,53 +22,44 @@ class OnChainCrawlerService:
 
     def _fetch_oi(self, symbol):
         try:
-            # Using Coinglass public API (This might fail due to WAF)
-            url = f"https://fapi.coinglass.com/api/openInterest/v2?symbol={symbol}"
+            # Using Coinglass public API (This might fail due to WAF or Endpoint deprecation)
+            # Update to newer endpoint if available
+            url = f"https://fapi.coinglass.com/api/futures/openInterest/chart?symbol={symbol}&interval=1h"
             res = requests.get(url, headers=self.headers, timeout=5)
             
-            if res.status_code == 200:
-                data = res.json().get("data", [])
-                if data:
-                    total_oi = sum([x.get("openInterest", 0) for x in data])
-                    self._upsert_metric(f"{symbol}_OI", symbol, "OI", total_oi, "USD")
+            if res.status_code == 200 and res.json().get("code") == "0":
+                data_list = res.json().get("data", {}).get("dataMap", {}).get("Binance", [])
+                if data_list:
+                    latest_oi = data_list[-1]
+                    self._upsert_metric(f"{symbol}_OI", symbol, "OI", latest_oi, "USD")
                     return
-            
-            # Fallback if API fails
-            logger.warning(f"Coinglass OI API failed, using mock data for {symbol}")
-            self._upsert_metric(f"{symbol}_OI", symbol, "OI", 35000000000.0 * (1 + random.uniform(-0.05, 0.05)), "USD")
-            
+            else:
+                logger.warning(f"Coinglass OI API failed or 404 for {symbol}")
+                
         except Exception as e:
             logger.error(f"Failed to fetch OI for {symbol}: {e}")
-            # Fallback
-            self._upsert_metric(f"{symbol}_OI", symbol, "OI", 35000000000.0, "USD")
 
     def _fetch_ls_ratio(self, symbol):
         try:
             # Long/Short Ratio (Global)
-            # https://fapi.coinglass.com/api/support/longShortRate?symbol=BTC&timeType=1
-            url = f"https://fapi.coinglass.com/api/support/longShortRate?symbol={symbol}&timeType=1"
+            url = f"https://fapi.coinglass.com/api/futures/longShortRate?symbol={symbol}&timeType=1"
             res = requests.get(url, headers=self.headers, timeout=5)
             
-            if res.status_code == 200:
-                data = res.json().get("data", [])
-                if data:
-                    # Coinglass usually returns list of exchanges.
-                    # We need the weighted average or just Binance.
-                    # Actually, this endpoint returns history?
-                    # Let's use a simpler one or parse response.
-                    # Assuming response is a list of time-series objects.
-                    latest = data[-1] if isinstance(data, list) else data
-                    ratio = latest.get("longShortRate")
-                    if ratio:
-                        self._upsert_metric(f"{symbol}_LS_RATIO", symbol, "LS_RATIO", float(ratio), "Ratio")
-                        return
-
-            logger.warning(f"Coinglass LS API failed, using mock data for {symbol}")
-            self._upsert_metric(f"{symbol}_LS_RATIO", symbol, "LS_RATIO", 1.2 + random.uniform(-0.2, 0.2), "Ratio")
-
+            if res.status_code == 200 and res.json().get("code") == "0":
+                data_list = res.json().get("data", [])
+                if data_list:
+                    # Just take Binance or global avg
+                    for item in data_list:
+                        if item.get("exchangeName") == "Binance":
+                            ls_ratio = item.get("longShortRatio")
+                            if ls_ratio:
+                                self._upsert_metric(f"{symbol}_LS_RATIO", symbol, "LS_RATIO", ls_ratio, "Ratio")
+                                return
+            else:
+                logger.warning(f"Coinglass LS API failed or 404 for {symbol}")
+                
         except Exception as e:
-            logger.error(f"Failed to fetch LS Ratio: {e}")
-            self._upsert_metric(f"{symbol}_LS_RATIO", symbol, "LS_RATIO", 1.1, "Ratio")
+            logger.error(f"Failed to fetch LS Ratio for {symbol}: {e}")
 
     def _upsert_metric(self, uid, symbol, name, value, unit):
         obj = self.db.query(OnChainMetric).filter(OnChainMetric.id == uid).first()

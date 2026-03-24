@@ -96,18 +96,36 @@ class Analyst(BaseAgent):
         # 2. Fetch Multi-Timeframe Context (Trend Alignment)
         mtf_context = market_data_service.get_multi_timeframe_context(symbol)
         mtf_text = ""
+        stale_warnings = []
         if "error" not in mtf_context:
-            mtf_text = (
-                f"### Multi-Timeframe Trend\n"
-                f"- 1H (Macro): {mtf_context.get('1h (Trend)', 'N/A')}\n"
-                f"- 15M (Structure): {mtf_context.get('15m (Structure)', 'N/A')}\n"
-                f"- 5M (Momentum): {mtf_context.get('5m (Entry)', 'N/A')}\n"
-            )
+            mtf_text = "### Multi-Timeframe Trend\n"
+            for tf_label, tf_key in [("1H (Macro)", "1h (Trend)"), ("15M (Structure)", "15m (Structure)"), ("5M (Momentum)", "5m (Entry)")]:
+                ctx = mtf_context.get(tf_key)
+                if isinstance(ctx, dict):
+                    if ctx.get("is_stale"):
+                        stale_warnings.append(f"{tf_label} data is stale")
+                    trend_val = ctx.get("trend", "N/A")
+                    mtf_text += f"- {tf_label}: {trend_val} (Close: {ctx.get('close')}, RSI: {ctx.get('rsi')})\n"
+                else:
+                    mtf_text += f"- {tf_label}: {ctx}\n"
         else:
             mtf_text = "### Multi-Timeframe Trend\nData unavailable."
 
+        # Check sub-agent data staleness
+        if state.macro_report and "[DATA STALE" in str(state.macro_report.key_factors):
+            stale_warnings.append("Macro data is stale (>24h)")
+        if state.onchain_report and "[DATA STALE" in str(state.onchain_report.analysis):
+            stale_warnings.append("On-Chain data is stale (>24h)")
+        if state.sentiment_report and "[DATA STALE" in str(state.sentiment_report.raw_data):
+            stale_warnings.append("Sentiment/Fear&Greed data is stale")
+
+        stale_alert_text = ""
+        if stale_warnings:
+            stale_alert_text = "⚠️ **SYSTEM DATA STALE WARNING** ⚠️\nThe following data sources are out of date and may be unreliable:\n" + "\n".join([f"- {w}" for w in stale_warnings]) + "\n\n**INSTRUCTION**: You MUST reduce your confidence score and highlight these risks in your analysis. If multiple critical sources are stale, recommend NEUTRAL/NO TRADE.\n\n"
+
         # Construct Technical Context for LLM
         technical_text = (
+            f"{stale_alert_text}"
             f"### Realtime Technicals (1m)\n"
             f"- Price: {price}\n"
             f"- Volume: {volume}\n"

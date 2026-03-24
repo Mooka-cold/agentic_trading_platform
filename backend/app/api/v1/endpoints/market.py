@@ -7,8 +7,17 @@ from app.services.macro_data import MacroDataService
 from app.services.onchain_data import OnChainDataService
 from datetime import datetime, timedelta
 import pandas as pd
+from shared.core.symbols import get_schedule_symbols_from_env
 
 router = APIRouter()
+
+def _active_symbols() -> List[str]:
+    return get_schedule_symbols_from_env()
+
+@router.get("/symbols")
+def get_market_symbols() -> Dict[str, Any]:
+    symbols = _active_symbols()
+    return {"symbols": symbols, "count": len(symbols)}
 
 @router.get("/ticker")
 async def get_market_ticker(
@@ -118,18 +127,6 @@ def get_onchain_metrics(
     """
     service = OnChainDataService(db)
     return service.get_latest_snapshot(symbol)
-
-@router.post("/macro/update")
-def trigger_macro_update(
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_user_db)
-):
-    """
-    Trigger an async update of macro data (Crawler).
-    """
-    service = MacroDataService(db)
-    background_tasks.add_task(service.fetch_and_store_all)
-    return {"status": "update_triggered"}
 
 @router.get("/kline")
 def get_kline_data(

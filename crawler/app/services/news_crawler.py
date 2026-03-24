@@ -237,9 +237,13 @@ class NewsCrawler:
                 html_text = await self._fetch_text_with_retry(page_url, retries=3, timeout_seconds=10.0)
                 parsed_items = self._parse_techflow_items(source_name, self._normalize_techflow_text(html_text))
                 existing_rows = db.query(News.title, News.published_at).filter(News.source == source_name).all()
-                existing_keys = {f"{source_name}|{re.sub(r'\\s+', ' ', row[0]).strip()}|{row[1].strftime('%Y-%m-%d %H:%M')}" for row in existing_rows}
+                # Use a helper function or pre-calculate to avoid backslash in f-string expression
+                def clean_title(title_str):
+                    return re.sub(r'\s+', ' ', title_str).strip()
+                
+                existing_keys = {f"{source_name}|{clean_title(row[0])}|{row[1].strftime('%Y-%m-%d %H:%M')}" for row in existing_rows}
                 for item in parsed_items:
-                    key = f"{source_name}|{re.sub(r'\\s+', ' ', item['title']).strip()}|{item['published_at'].strftime('%Y-%m-%d %H:%M')}"
+                    key = f"{source_name}|{clean_title(item['title'])}|{item['published_at'].strftime('%Y-%m-%d %H:%M')}"
                     if key in existing_keys:
                         continue
                     db.add(

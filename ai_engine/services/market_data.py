@@ -29,6 +29,15 @@ class MarketDataService:
         df = self._fetch_ohlcv(symbol, "1m", 1)
         if df.empty:
             return 0.0
+            
+        # Check freshness (warn if > 5 mins)
+        last_ts = pd.to_datetime(df.iloc[-1]['time']).timestamp()
+        now_ts = pd.Timestamp.utcnow().timestamp()
+        if now_ts - last_ts > 300:
+            import logging
+            logger = logging.getLogger("ai_engine.market_data")
+            logger.warning(f"⚠️ WARNING: Market data for {symbol} is STALE ({(now_ts - last_ts)/60:.1f} minutes old). Streamer might be offline.")
+            
         return float(df.iloc[-1]['close'])
 
     def get_full_snapshot(self, symbol: str) -> dict:
@@ -279,6 +288,11 @@ class MarketDataService:
                 if pd.isna(val): return default
                 return val
 
+            # Check freshness of this timeframe
+            last_ts = pd.to_datetime(last.name).timestamp() if isinstance(last.name, pd.Timestamp) else 0
+            now_ts = pd.Timestamp.utcnow().timestamp()
+            is_stale = (now_ts - last_ts) > 300 if last_ts > 0 else False
+            
             trend = "NEUTRAL"
             close = get_val(last['close'])
             sma20 = get_val(last.get('SMA_20', 0))
@@ -289,16 +303,16 @@ class MarketDataService:
             elif close < sma20 < sma50:
                 trend = "BEARISH"
                 
-            summary = (
-                f"Trend: {trend}\n"
-                f"Price: {close:.2f}\n"
-                f"RSI(14): {get_val(last.get('RSI', 50)):.1f}\n"
-                f"MACD: {get_val(last.get('MACD', 0)):.2f} (Hist: {get_val(last.get('Hist', 0)):.2f})\n"
-                f"BB: {get_val(last.get('BB_Upper', 0)):.2f} / {get_val(last.get('BB_Lower', 0)):.2f}\n"
-                f"ATR: {get_val(last.get('ATR', 0)):.2f}\n"
-                f"SMA20: {sma20:.2f}, EMA20: {get_val(last.get('EMA_20', 0)):.2f}"
-            )
-            context[label] = summary
+            stale_warning = "[STALE DATA] " if is_stale else ""
+            context[label] = {
+                "trend": f"{stale_warning}{trend}",
+                "close": close,
+                "rsi": get_val(last.get('RSI', 50.0)),
+                "macd_hist": get_val(last.get('Hist', 0.0)),
+                "atr": get_val(last.get('ATR', 0.0)),
+                "bb_pos": "UPPER" if close > get_val(last.get('BB_Upper', close)) else "LOWER" if close < get_val(last.get('BB_Lower', close)) else "MIDDLE",
+                "is_stale": is_stale
+            }
             
         return context
 

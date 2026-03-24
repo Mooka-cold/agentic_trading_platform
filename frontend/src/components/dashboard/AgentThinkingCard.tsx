@@ -1,24 +1,22 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import { 
-  Activity, 
   X,
   Cpu,
-  ArrowRight,
-  MessageSquare,
   AlertCircle,
   Square,
   Play,
   Wallet,
   TrendingUp,
   TrendingDown,
-  DollarSign,
   History,
   ExternalLink
 } from "lucide-react";
 import { MarketAPI } from "@/lib/api/market";
+import { API_BASE_URL } from "@/lib/api/base";
 import { formatTime, formatDateTime } from "@/lib/utils";
 
 // --- Types ---
@@ -78,22 +76,35 @@ interface Order {
 
 // --- Configuration (Based on ai_engine/prompts) ---
 
-const AGENTS: AgentConfig[] = [
+const SOURCE_AGENT_IDS = [
+  "analyst",
+  "sentiment",
+  "macro",
+  "onchain",
+  "bull_strategist",
+  "bear_strategist",
+  "portfolio_manager",
+  "reviewer",
+  "reflector",
+  "strategist"
+] as const;
+
+const DISPLAY_AGENTS: AgentConfig[] = [
   { 
     id: "analyst", 
     name: "The Analyst", 
-    role: "Market Scanner", 
+    role: "Research Team", 
     avatarSeed: "Analyst", 
-    description: "Scans market data and technical indicators.",
+    description: "Aggregates technical, sentiment, macro, and on-chain analysis.",
     color: "#3b82f6" // Blue
   },
   { 
-    id: "strategist", 
-    name: "The Strategist", 
-    role: "Strategy Generator", 
-    avatarSeed: "Strategist", 
-    description: "Formulates trading plans based on analysis.",
-    color: "#8b5cf6" // Violet
+    id: "strategy_committee", 
+    name: "Strategy Committee", 
+    role: "Strategy Committee", 
+    avatarSeed: "StrategistCommittee", 
+    description: "Combines bull/bear proposals and PM arbitration in one stage.",
+    color: "#a855f7" // Purple
   },
   { 
     id: "reviewer", 
@@ -113,6 +124,26 @@ const AGENTS: AgentConfig[] = [
   }
 ];
 
+const DISPLAY_AGENT_CHILDREN: Record<string, string[]> = {
+  analyst: ["analyst", "sentiment", "macro", "onchain"],
+  strategy_committee: ["bull_strategist", "bear_strategist", "portfolio_manager", "strategist"],
+  reviewer: ["reviewer"],
+  reflector: ["reflector"]
+};
+
+const SOURCE_AGENT_LABEL: Record<string, string> = {
+  analyst: "Analyst",
+  sentiment: "Sentiment",
+  macro: "Macro",
+  onchain: "On-Chain",
+  bull_strategist: "Bull",
+  bear_strategist: "Bear",
+  portfolio_manager: "PM",
+  strategist: "Legacy",
+  reviewer: "Reviewer",
+  reflector: "Reflector"
+};
+
 // --- Components ---
 
 const PixelAvatar = ({ seed, size = 40, isWorking }: { seed: string, size?: number, isWorking?: boolean }) => {
@@ -128,10 +159,13 @@ const PixelAvatar = ({ seed, size = 40, isWorking }: { seed: string, size?: numb
       transition: 'all 0.3s'
     }}>
         {/* Pixel Art Image */}
-        <img 
-            src={`https://api.dicebear.com/9.x/pixel-art/svg?seed=${seed}&backgroundColor=transparent`} 
-            alt={seed} 
-            style={{ width: '100%', height: '100%', objectFit: 'cover', imageRendering: 'pixelated' }} 
+        <Image
+            src={`https://api.dicebear.com/9.x/pixel-art/svg?seed=${seed}&backgroundColor=transparent`}
+            alt={seed}
+            fill
+            sizes={`${size}px`}
+            unoptimized
+            style={{ objectFit: 'cover', imageRendering: 'pixelated' }}
         />
         
         {/* Working Animation Overlay */}
@@ -157,15 +191,20 @@ const PixelAvatar = ({ seed, size = 40, isWorking }: { seed: string, size?: numb
 const AgentNode = ({ 
   config, 
   state, 
-  onClick 
+  onClick,
+  subagents = [],
+  subagentStates = {}
 }: { 
   config: AgentConfig; 
   state: AgentState; 
   onClick: () => void;
+  subagents?: Array<{ id: string; label: string; status: AgentStatus }>;
+  subagentStates?: Record<string, AgentState>;
 }) => {
   const isWorking = state.status === "working";
-  const isIdle = state.status === "idle";
   const isSuccess = state.status === "success";
+  const isStrategyCommittee = config.id === "strategy_committee";
+  const isAnalystHub = config.id === "analyst";
 
   // Dynamic Styles based on state
   const bgStyle = isWorking 
@@ -216,6 +255,21 @@ const AgentNode = ({
       });
   };
 
+  const getStatusColor = (status: AgentStatus) => {
+    if (status === "working") return config.color;
+    if (status === "success") return "#22c55e";
+    if (status === "error") return "#ef4444";
+    return "#475569";
+  };
+
+  const getSubSummary = (subId: string) => {
+    const s = subagentStates[subId];
+    if (!s) return "Waiting...";
+    const raw = s.currentOutput || s.currentInput || s.logs[s.logs.length - 1]?.content || "Waiting...";
+    const line = String(raw).replace(/\s+/g, " ").trim();
+    return line.length > 120 ? `${line.slice(0, 120)}...` : line;
+  };
+
   return (
     <motion.div
       onClick={onClick}
@@ -258,12 +312,88 @@ const AgentNode = ({
             <span style={{ fontSize: '11px', color: config.color, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 {config.role}
             </span>
+            {subagents.length > 0 && !isStrategyCommittee && !isAnalystHub && (
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+                {subagents.map((s) => (
+                  <span
+                    key={`${config.id}-${s.id}`}
+                    style={{
+                      fontSize: '9px',
+                      padding: '2px 6px',
+                      borderRadius: '999px',
+                      border: '1px solid #334155',
+                      color: s.status === "working" ? '#f8fafc' : '#94a3b8',
+                      backgroundColor: s.status === "working" ? '#334155' : '#0f172a'
+                    }}
+                  >
+                    {s.label}
+                  </span>
+                ))}
+              </div>
+            )}
         </div>
       </div>
 
       {/* Speech Bubble (Input/Output) */}
       <div style={{ marginTop: '16px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-        {(state.currentInput || state.currentOutput) ? (
+        {isStrategyCommittee ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', alignItems: 'stretch' }}>
+            {[
+              { id: "bear_strategist", title: "Bear Strategist" },
+              { id: "bull_strategist", title: "Bull Strategist" }
+            ].map((panel) => {
+              const subStatus = (subagentStates[panel.id]?.status || "idle") as AgentStatus;
+              return (
+                <div key={panel.id} style={{ backgroundColor: '#1e293b', borderRadius: '8px', padding: '10px', border: '1px solid #334155', minHeight: '110px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#e2e8f0' }}>{panel.title}</span>
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: getStatusColor(subStatus), boxShadow: subStatus === "working" ? `0 0 8px ${config.color}` : 'none' }} />
+                  </div>
+                  <div style={{ color: '#cbd5e1', fontSize: '10px', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {getSubSummary(panel.id)}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', color: '#94a3b8', fontSize: '10px', letterSpacing: '0.3px' }}>
+              <span style={{ border: '1px solid #334155', borderRadius: '999px', padding: '2px 8px' }}>Bear/Bull Debate</span>
+              <span style={{ color: '#a78bfa', fontWeight: 'bold' }}>→</span>
+              <span style={{ border: '1px solid #334155', borderRadius: '999px', padding: '2px 8px' }}>PM Arbitration</span>
+            </div>
+            <div style={{ gridColumn: '1 / -1', backgroundColor: '#1e293b', borderRadius: '8px', padding: '10px', border: '1px solid #334155', minHeight: '120px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: '#e2e8f0' }}>Portfolio Manager</span>
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: getStatusColor((subagentStates["portfolio_manager"]?.status || "idle") as AgentStatus), boxShadow: subagentStates["portfolio_manager"]?.status === "working" ? `0 0 8px ${config.color}` : 'none' }} />
+              </div>
+              <div style={{ color: '#cbd5e1', fontSize: '10px', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {getSubSummary("portfolio_manager")}
+              </div>
+            </div>
+          </div>
+        ) : isAnalystHub ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', alignItems: 'stretch' }}>
+            {[
+              { id: "macro", title: "Macro Agent" },
+              { id: "onchain", title: "On-Chain Agent" },
+              { id: "sentiment", title: "Sentiment Agent" },
+              { id: "analyst", title: "Analyst Core" }
+            ].map((panel) => {
+              const subStatus = (subagentStates[panel.id]?.status || "idle") as AgentStatus;
+              return (
+                <div key={panel.id} style={{ backgroundColor: '#1e293b', borderRadius: '8px', padding: '10px', border: '1px solid #334155', minHeight: '110px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#e2e8f0' }}>{panel.title}</span>
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: getStatusColor(subStatus), boxShadow: subStatus === "working" ? `0 0 8px ${config.color}` : 'none' }} />
+                  </div>
+                  <div style={{ color: '#cbd5e1', fontSize: '10px', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {getSubSummary(panel.id)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+        (state.currentInput || state.currentOutput) ? (
              <div style={{ 
                 backgroundColor: '#1e293b', 
                 borderRadius: '8px', 
@@ -386,6 +516,7 @@ const AgentNode = ({
              }}>
                 Zzz...
              </div>
+        )
         )}
       </div>
 
@@ -968,7 +1099,7 @@ const AgentDetailModal = ({
   );
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = API_BASE_URL;
 
 // --- Portfolio Sidebar Component ---
 const PortfolioSidebar = () => {
@@ -1316,8 +1447,8 @@ interface AgentThinkingCardProps {
 export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) => {
   const [agentsState, setAgentsState] = useState<Record<string, AgentState>>(() => {
     const initial: Record<string, AgentState> = {};
-    AGENTS.forEach(a => {
-        initial[a.id] = { status: 'idle', logs: [] };
+    SOURCE_AGENT_IDS.forEach((id) => {
+        initial[id] = { status: 'idle', logs: [] };
     });
     return initial;
   });
@@ -1327,8 +1458,120 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [tradingSymbol, setTradingSymbol] = useState("BTC/USDT");
+  const [, setCurrentSessionId] = useState<string | null>(null);
+  const [tradingSymbol, setTradingSymbol] = useState("");
+  const [symbolOptions, setSymbolOptions] = useState<string[]>([]);
+  const hasLogsRef = useRef(false);
+
+  useEffect(() => {
+      hasLogsRef.current = Object.values(agentsState).some((s) => s.logs.length > 0);
+  }, [agentsState]);
+
+  useEffect(() => {
+      let cancelled = false;
+      const fetchSymbolOptions = async () => {
+          try {
+              const res = await fetch(`${API_URL}/api/v1/market/symbols`);
+              if (!res.ok) return;
+              const data = await res.json();
+              if (!cancelled && Array.isArray(data.symbols) && data.symbols.length > 0) {
+                  setSymbolOptions(data.symbols);
+                  setTradingSymbol((prev) => (data.symbols.includes(prev) ? prev : data.symbols[0]));
+              }
+          } catch (e) {
+              console.error("Load symbol options failed", e);
+          }
+      };
+      fetchSymbolOptions();
+      return () => {
+          cancelled = true;
+      };
+  }, []);
+
+  const connectMonitor = useCallback((symbol: string) => {
+      if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+      }
+      
+      console.log("Connecting Monitor SSE to:", symbol);
+      const evtSource = new EventSource(`/api/ai_engine/stream/monitor?symbol=${encodeURIComponent(symbol)}`);
+      eventSourceRef.current = evtSource;
+
+      evtSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            const agentId = data.agent_id;
+            
+            if (!agentId) return;
+
+            if (agentId === 'analyst' && data.artifact) {
+                onSignalUpdate?.(data.artifact);
+            }
+
+            setCurrentSessionId(prevId => {
+                if (data.session_id && prevId && data.session_id !== prevId) {
+                    console.log("Session changed! Clearing logs...", prevId, "->", data.session_id);
+                    setAgentsState(() => {
+                        const reset: Record<string, AgentState> = {};
+                        SOURCE_AGENT_IDS.forEach((id) => { reset[id] = { status: 'idle', logs: [] }; });
+                        return reset;
+                    });
+                    return data.session_id;
+                }
+                return data.session_id || prevId;
+            });
+
+            setAgentsState(prev => {
+                const currentAgentState = prev[agentId] || { status: 'idle', logs: [] };
+                
+                let newStatus = currentAgentState.status;
+                let newOutput = currentAgentState.currentOutput;
+                let newInput = currentAgentState.currentInput;
+                const newArtifact = data.artifact || currentAgentState.artifact;
+                const looksLikeDecision = typeof data.content === 'string' && (data.content.startsWith("DECISION:") || data.content.startsWith("PROPOSAL:"));
+                const effectiveType = looksLikeDecision ? 'output' : data.type;
+
+                if (effectiveType === 'process' && data.content) {
+                     newStatus = 'working';
+                     if (!data.content.startsWith("Step") && data.content.length < 50) {
+                         newInput = data.content;
+                     }
+                } else if (effectiveType === 'output') {
+                    newStatus = 'success';
+                    newOutput = data.content;
+                }
+
+                const newLogs = [...currentAgentState.logs, {
+                    id: Math.random().toString(),
+                    timestamp: formatTime(data.timestamp),
+                    session_id: data.session_id,
+                    type: effectiveType,
+                    content: data.content,
+                    artifact: data.artifact ?? null
+                }];
+
+                return {
+                    ...prev,
+                    [agentId]: {
+                        ...currentAgentState,
+                        status: newStatus,
+                        currentOutput: newOutput,
+                        currentInput: newInput,
+                        artifact: newArtifact,
+                        logs: newLogs
+                    }
+                };
+            });
+
+        } catch (e) {
+            console.error("SSE Parse Error", e);
+        }
+    };
+
+    evtSource.onerror = (err) => {
+        console.error("EventSource failed:", err);
+    };
+  }, [onSignalUpdate]);
 
   // Hydrate state from backend persistence
   useEffect(() => {
@@ -1346,10 +1589,12 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
                   }
 
                   if (running) {
-                      const symbol = statusData.symbol || "BTC/USDT";
-                      setTradingSymbol(symbol);
+                      const symbol = String(statusData.symbol || "").trim();
+                      if (symbol) {
+                          setTradingSymbol(symbol);
+                      }
                       // Only connect if not already connected or symbol changed
-                      if (!eventSourceRef.current || !eventSourceRef.current.url.includes(encodeURIComponent(symbol))) {
+                      if (symbol && (!eventSourceRef.current || !eventSourceRef.current.url.includes(encodeURIComponent(symbol)))) {
                           connectMonitor(symbol);
                       }
                   } else {
@@ -1364,22 +1609,24 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
               // 2. Load Latest Logs (Initial or Periodic Sync)
               // Only sync logs if we are NOT in active loop mode to avoid race conditions with SSE
               // OR if we have no logs at all
-              const hasLogs = Object.values(agentsState).some(s => s.logs.length > 0);
+              const hasLogs = hasLogsRef.current;
               
               if (!isLoopActive || !hasLogs) {
-                  const res = await fetch(`${API_URL}/api/v1/workflow/latest?symbol=${encodeURIComponent(tradingSymbol)}`);
-                  if (res.ok) {
-                      const data = await res.json();
-                      if (data.session && data.session.logs.length > 0) {
-                          const polledSessionId = data.session.id;
-                          
-                          setCurrentSessionId(prev => {
-                              if (prev !== polledSessionId) {
-                                  updateStateFromLogs(data.session.logs);
-                                  return polledSessionId;
-                              }
-                              return prev;
-                          });
+                  if (tradingSymbol) {
+                      const res = await fetch(`${API_URL}/api/v1/workflow/latest?symbol=${encodeURIComponent(tradingSymbol)}`);
+                      if (res.ok) {
+                          const data = await res.json();
+                          if (data.session && data.session.logs.length > 0) {
+                              const polledSessionId = data.session.id;
+                              
+                              setCurrentSessionId(prev => {
+                                  if (prev !== polledSessionId) {
+                                      updateStateFromLogs(data.session.logs);
+                                      return polledSessionId;
+                                  }
+                                  return prev;
+                              });
+                          }
                       }
                   }
               }
@@ -1391,12 +1638,12 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
       hydrate();
       const interval = setInterval(hydrate, 5000);
       return () => clearInterval(interval);
-  }, [isLoopActive, tradingSymbol]); // Re-run when active state or symbol changes
+  }, [isLoopActive, tradingSymbol, connectMonitor]); // Re-run when active state or symbol changes
 
   const updateStateFromLogs = (logs: any[]) => {
-      setAgentsState(prev => {
+      setAgentsState(() => {
           const resetState: Record<string, AgentState> = {};
-          AGENTS.forEach(a => { resetState[a.id] = { status: 'idle', logs: [] }; });
+          SOURCE_AGENT_IDS.forEach((id) => { resetState[id] = { status: 'idle', logs: [] }; });
           
           logs.forEach((log: any) => {
               const agentId = log.agent_id;
@@ -1436,94 +1683,6 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
       });
   };
 
-  const connectMonitor = (symbol: string) => {
-      if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-      }
-      
-      console.log("Connecting Monitor SSE to:", symbol);
-      const evtSource = new EventSource(`/api/ai_engine/stream/monitor?symbol=${encodeURIComponent(symbol)}`);
-      eventSourceRef.current = evtSource;
-
-      evtSource.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            const agentId = data.agent_id;
-            
-            if (!agentId) return;
-
-            // Notify parent if Analyst has artifact (Signal)
-            if (agentId === 'analyst' && data.artifact) {
-                onSignalUpdate?.(data.artifact);
-            }
-
-            // AUTO-CLEAR LOGIC: If session_id changes, clear logs
-            setCurrentSessionId(prevId => {
-                if (data.session_id && prevId && data.session_id !== prevId) {
-                    console.log("Session changed! Clearing logs...", prevId, "->", data.session_id);
-                    // Clear logs in state
-                    setAgentsState(prev => {
-                        const reset: Record<string, AgentState> = {};
-                        AGENTS.forEach(a => { reset[a.id] = { status: 'idle', logs: [] }; });
-                        return reset;
-                    });
-                    return data.session_id;
-                }
-                return data.session_id || prevId;
-            });
-
-            setAgentsState(prev => {
-                const currentAgentState = prev[agentId] || { status: 'idle', logs: [] };
-                
-                let newStatus = currentAgentState.status;
-                let newOutput = currentAgentState.currentOutput;
-                let newInput = currentAgentState.currentInput;
-                const newArtifact = data.artifact || currentAgentState.artifact;
-                const looksLikeDecision = typeof data.content === 'string' && (data.content.startsWith("DECISION:") || data.content.startsWith("PROPOSAL:"));
-                const effectiveType = looksLikeDecision ? 'output' : data.type;
-
-                if (effectiveType === 'process' && data.content) {
-                     newStatus = 'working';
-                     if (!data.content.startsWith("Step") && data.content.length < 50) {
-                         newInput = data.content;
-                     }
-                } else if (effectiveType === 'output') {
-                    newStatus = 'success';
-                    newOutput = data.content;
-                }
-
-                const newLogs = [...currentAgentState.logs, {
-                    id: Math.random().toString(),
-                    timestamp: formatTime(data.timestamp),
-                    session_id: data.session_id, // Map session_id
-                    type: effectiveType,
-                    content: data.content,
-                    artifact: data.artifact ?? null
-                }];
-
-                return {
-                    ...prev,
-                    [agentId]: {
-                        ...currentAgentState,
-                        status: newStatus,
-                        currentOutput: newOutput,
-                        currentInput: newInput,
-                        artifact: newArtifact,
-                        logs: newLogs
-                    }
-                };
-            });
-
-        } catch (e) {
-            console.error("SSE Parse Error", e);
-        }
-    };
-
-    evtSource.onerror = (err) => {
-        console.error("EventSource failed:", err);
-    };
-  };
-
   const stopLoop = async () => {
       try {
           await fetch("/api/ai_engine/workflow/stop", { method: "POST" });
@@ -1544,7 +1703,7 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
     if (!isLoopActive) {
         // Fresh Start
         const reset: Record<string, AgentState> = {};
-        AGENTS.forEach(a => { reset[a.id] = { status: 'idle', logs: [] }; });
+        SOURCE_AGENT_IDS.forEach((id) => { reset[id] = { status: 'idle', logs: [] }; });
         
         reset['analyst'] = {
             status: 'working',
@@ -1571,6 +1730,12 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
     // Note: In a real app, we might want to store this ID in URL or context
     
     // In Continuous Mode, we connect to the MONITOR channel, not the specific session channel
+    if (!tradingSymbol) {
+        setErrorMessage("No trading symbol available");
+        setIsLoopActive(false);
+        return;
+    }
+
     connectMonitor(tradingSymbol);
 
     try {
@@ -1601,6 +1766,68 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
     };
   }, []);
 
+  const deriveDisplayState = useCallback((displayId: string): AgentState => {
+    const childIds = DISPLAY_AGENT_CHILDREN[displayId] || [displayId];
+    const childStates = childIds
+      .map((id) => agentsState[id])
+      .filter((s): s is AgentState => Boolean(s));
+    if (childStates.length === 0) {
+      return { status: "idle", logs: [] };
+    }
+    const status: AgentStatus = childStates.some((s) => s.status === "working")
+      ? "working"
+      : childStates.some((s) => s.status === "error")
+      ? "error"
+      : childStates.some((s) => s.status === "success")
+      ? "success"
+      : "idle";
+    const logs = childStates.flatMap((s) => s.logs);
+    const lastOutput = [...logs].reverse().find((l) => l.type === "output");
+    
+    // For Hub agents, aggregate outputs instead of just taking the last one
+    let aggregatedOutput = lastOutput?.content;
+    if (displayId === "analyst" || displayId === "strategy_committee") {
+        const allOutputs = childIds
+            .map(id => {
+                const s = agentsState[id];
+                if (!s) return null;
+                const outLog = [...s.logs].reverse().find(l => l.type === "output");
+                return outLog ? `${SOURCE_AGENT_LABEL[id] || id}: ${outLog.content}` : null;
+            })
+            .filter(Boolean);
+        if (allOutputs.length > 0) {
+            aggregatedOutput = allOutputs.join('\n\n');
+        }
+    }
+    
+    const lastProcess = [...logs].reverse().find((l) => l.type === "process");
+    const lastArtifact = [...logs].reverse().find((l) => Boolean(l.artifact))?.artifact;
+    return {
+      status,
+      currentInput: lastProcess?.content,
+      currentOutput: aggregatedOutput,
+      logs,
+      artifact: lastArtifact || undefined
+    };
+  }, [agentsState]);
+
+  const buildSubagentChips = useCallback((displayId: string) => {
+    const childIds = DISPLAY_AGENT_CHILDREN[displayId] || [displayId];
+    return childIds.map((id) => ({
+      id,
+      label: SOURCE_AGENT_LABEL[id] || id,
+      status: (agentsState[id]?.status || "idle") as AgentStatus
+    }));
+  }, [agentsState]);
+
+  const buildSubagentStates = useCallback((displayId: string): Record<string, AgentState> => {
+    const childIds = DISPLAY_AGENT_CHILDREN[displayId] || [displayId];
+    return childIds.reduce((acc, id) => {
+      acc[id] = agentsState[id] || { status: "idle", logs: [] };
+      return acc;
+    }, {} as Record<string, AgentState>);
+  }, [agentsState]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#020617', color: '#e2e8f0', borderRadius: '12px', overflow: 'hidden', border: '1px solid #1e293b', position: 'relative' }}>
       
@@ -1627,9 +1854,9 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
                         cursor: 'pointer'
                     }}
                 >
-                    <option value="BTC/USDT">BTC/USDT</option>
-                    <option value="ETH/USDT">ETH/USDT</option>
-                    <option value="SOL/USDT">SOL/USDT</option>
+                    {symbolOptions.map((item) => (
+                        <option key={item} value={item}>{item}</option>
+                    ))}
                 </select>
             ) : (
                 <span style={{ 
@@ -1710,11 +1937,13 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
                 gap: '16px',
                 height: '100%'
             }}>
-                {AGENTS.map(agent => (
+                {DISPLAY_AGENTS.map((agent) => (
                     <AgentNode 
                         key={agent.id} 
                         config={agent} 
-                        state={agentsState[agent.id]} 
+                        state={deriveDisplayState(agent.id)} 
+                        subagents={buildSubagentChips(agent.id)}
+                        subagentStates={buildSubagentStates(agent.id)}
                         onClick={() => setSelectedAgentId(agent.id)}
                     />
                 ))}
@@ -1730,8 +1959,8 @@ export const AgentThinkingCard = ({ onSignalUpdate }: AgentThinkingCardProps) =>
       <AnimatePresence>
         {selectedAgentId && (
             <AgentDetailModal 
-                agent={AGENTS.find(a => a.id === selectedAgentId)!}
-                state={agentsState[selectedAgentId]}
+                agent={DISPLAY_AGENTS.find((a) => a.id === selectedAgentId)!}
+                state={deriveDisplayState(selectedAgentId)}
                 onClose={() => setSelectedAgentId(null)}
             />
         )}

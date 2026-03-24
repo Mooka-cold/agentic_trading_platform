@@ -19,13 +19,37 @@ class MacroAgent(BaseAgent):
             data = await macro_data_service.get_macro_metrics()
             
             if not data:
-                await self.think("Macro data unavailable or stale. Triggering update...", session_id)
-                # In a real scenario, we might wait or return empty.
-                # For now, return empty report to avoid blocking flow.
+                await self.think("Macro data unavailable. Triggering update...", session_id)
                 return {}
+
+            # Check Data Freshness
+            is_stale = False
+            import datetime
+            from dateutil import parser
+            
+            # Helper to check timestamp
+            def check_staleness(timestamp_str, max_hours=24):
+                if not timestamp_str: return False
+                try:
+                    dt = parser.parse(timestamp_str)
+                    # handle timezone awareness
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    now = datetime.datetime.now(datetime.timezone.utc)
+                    return (now - dt).total_seconds() > max_hours * 3600
+                except:
+                    return False
+                    
+            dxy_ts = data.get("DXY", {}).get("timestamp")
+            if check_staleness(dxy_ts):
+                is_stale = True
+                await self.think("⚠️ WARNING: Macro data is STALE (>24h old). The Data Service might be failing.", session_id, log_type="error")
 
             # Analyze Regime
             regime, risk_score, reasons = self._analyze_regime(data)
+            
+            if is_stale:
+                reasons.insert(0, "[DATA STALE - PROCEED WITH CAUTION]")
             
             await self.say(
                 f"MACRO REGIME: {regime} (Risk Score: {risk_score})",

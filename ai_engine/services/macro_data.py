@@ -7,14 +7,15 @@ logger = logging.getLogger(__name__)
 class MacroDataService:
     def __init__(self):
         self.backend_url = settings.BACKEND_URL
+        self.crawler_url = settings.CRAWLER_URL
         
     async def get_macro_metrics(self) -> dict:
         """
         Fetch latest macro metrics from Backend API.
-        If data is stale or missing, trigger update.
+        If data is stale or missing, trigger update via Crawler.
         """
         url = f"{self.backend_url}/api/v1/market/macro"
-        update_url = f"{self.backend_url}/api/v1/market/macro/update"
+        trigger_url = f"{self.crawler_url}/api/v1/trigger/macro"
         
         try:
             async with httpx.AsyncClient() as client:
@@ -27,7 +28,10 @@ class MacroDataService:
                     # If empty, trigger update
                     if not data:
                         logger.warning("Macro data empty, triggering update...")
-                        await client.post(update_url)
+                        try:
+                            await client.post(trigger_url, timeout=2.0)
+                        except Exception as trigger_exc:
+                            logger.warning(f"Macro trigger failed: {trigger_exc}")
                         return {}
                         
                     return data
