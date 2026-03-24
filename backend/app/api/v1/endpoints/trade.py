@@ -28,6 +28,9 @@ class RiskConfigUpdate(BaseModel):
     daily_loss_limit_pct: Optional[float] = None
     max_drawdown_limit_pct: Optional[float] = None
 
+class CancelPendingRequest(BaseModel):
+    symbol: Optional[str] = None
+
 router = APIRouter()
 
 @router.post("/execute")
@@ -112,14 +115,26 @@ async def execute_trade(
         # Fetch updated balance
         new_balance = service.get_balance()
         
+        exec_status = execution_info.get("status")
+        if exec_status == "PENDING":
+            response_status = "ACCEPTED"
+            response_message = "Order placed in Pending pool"
+        elif exec_status:
+            response_status = exec_status
+            response_message = "Order executed" if exec_status == "FILLED" else f"Order {exec_status.lower()}"
+        else:
+            response_status = "FILLED"
+            response_message = "Order executed"
+
         response_payload = {
-            "status": "ACCEPTED" if execution_info.get("status") == "PENDING" else "FILLED",
-            "message": "Order executed" if execution_info.get("status") != "PENDING" else "Order placed in Pending pool",
+            "status": response_status,
+            "message": response_message,
             "order_id": execution_info.get("order_id"),
             "executed_price": trade.price if execution_info.get("status") != "PENDING" else trigger_price,
             "mode": execution_info.get("mode", "UNKNOWN"),
             "pnl": execution_info.get("pnl", 0.0),
-            "new_balance": new_balance
+            "new_balance": new_balance,
+            "leverage_guard": execution_info.get("leverage_guard"),
         }
         if redis_client and response_key:
             await redis_client.set(response_key, json.dumps(response_payload, ensure_ascii=False), ex=900)
@@ -206,6 +221,20 @@ async def get_pending_orders(
                 for o in orders
             ]
         return []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/orders/pending/cancel-all")
+async def cancel_all_pending_orders(
+    req: CancelPendingRequest,
+    db: Session = Depends(get_user_db),
+    user_id: int = Depends(get_runtime_user_id),
+):
+    service = ExecutionService(db, user_id=user_id)
+    try:
+        if service.mode != "PAPER":
+            return {"cancelled": 0, "symbol": req.symbol, "mode": service.mode}
+        return service.paper_service.cancel_pending_orders(user_id=user_id, symbol=req.symbol)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

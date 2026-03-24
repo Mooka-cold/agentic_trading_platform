@@ -66,19 +66,34 @@ cd ~/ai_trading
     *   当 Workflow 显示 ✅ Success 后。
     *   SSH 登录服务器，运行 `docker ps`，应该能看到 `ai_trading-backend`, `ai_trading-ai-engine` 等容器正在运行。
 
-## 4. 混合开发模式 (Hybrid Mode)
+## 4. 部署模式说明
+
+当前支持三种模式：
+
+1. **全部本地部署**：前后端与数据都在本地
+2. **全部远程部署**：前后端与数据都在远程
+3. **本地前端 + 远程后端**：前端本地调试，后端与 AI 在远程
+
+详细变量与排障建议见：
+
+- `docs/OPERATIONS_RUNBOOK.md`
+
+## 5. 混合开发模式 (Hybrid Mode)
 
 为了兼顾开发体验（本地调试）与网络环境（海外服务器），我们采用混合模式：
 
 *   **Backend / AI / DB**: 跑在远程服务器上。
 *   **Frontend**: 跑在本地。
 
-### 4.1 本地前端配置
+### 5.1 本地前端配置
 修改本地前端的 `.env.local` 文件：
 
 ```bash
 # 指向远程服务器的 Backend API
 NEXT_PUBLIC_API_URL=http://<YOUR_SERVER_IP>:3201
+
+# Next.js 服务端代理 /api/ai_engine/* 使用
+AI_ENGINE_URL=http://<YOUR_SERVER_IP>:3202
 ```
 
 启动本地前端：
@@ -87,9 +102,9 @@ cd frontend
 npm run dev
 ```
 
-现在，打开本地浏览器 `http://localhost:3000`，你操作的每一次点击，都会请求新加坡服务器上的 API，享受无墙的实时数据！
+现在，打开本地浏览器 `http://localhost:3200`，你操作的每一次点击，都会请求远程服务器上的 API。
 
-## 5. 常见问题
+## 6. 常见问题
 
 *   **端口不通？**
     *   检查云服务商（AWS Security Group / DigitalOcean Firewall）是否放行了 `3201`, `3202` 端口。

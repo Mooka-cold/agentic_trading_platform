@@ -1,104 +1,105 @@
-# AI Trading Terminal - UI/UX Design Specification
+# UI 规范文档
 
-## 1. Design System
+## 1. 设计目标
 
-### 1.1 Color Palette (Modern Financial)
-*   **Background**: 
-    *   App BG: `#F8FAFC` (Slate-50)
-    *   Card BG: `#FFFFFF` (White) with subtle border `#E2E8F0` (Slate-200)
-*   **Text**:
-    *   Primary: `#0F172A` (Slate-900)
-    *   Secondary: `#64748B` (Slate-500)
-    *   Tertiary: `#94A3B8` (Slate-400)
-*   **Functional**:
-    *   **Bullish/Success**: `#10B981` (Emerald-500)
-    *   **Bearish/Error**: `#EF4444` (Red-500)
-    *   **Primary Brand**: `#3B82F6` (Blue-500)
-    *   **Agent/AI**: `#8B5CF6` (Violet-500)
+- 用最少视觉噪音展示最多决策信息。
+- 让用户先看到“状态与结论”，再查看“过程与细节”。
+- 确保 Dashboard、History、Strategy、Settings 的交互语义一致。
 
-### 1.2 Typography
-*   **Font Family**: `Inter` (UI), `JetBrains Mono` (Numbers/Code).
-*   **Scale**:
-    *   H1 (Page Title): 24px, Bold.
-    *   H2 (Section Title): 18px, SemiBold.
-    *   Body: 14px, Regular.
-    *   Caption: 12px, Medium (Secondary text).
+## 2. 视觉语义
 
-### 1.3 Spacing & Radius
-*   **Radius**: `rounded-xl` (12px) for cards, `rounded-lg` (8px) for buttons/inputs.
-*   **Shadow**: `shadow-sm` (subtle depth), `shadow-md` (hover states).
-*   **Padding**: Compact density. `p-4` (16px) for standard card padding.
+### 2.1 状态语义
 
----
+- `working`：系统处理中，强调动效与高亮边框。
+- `success`：流程完成或通过，使用正向色。
+- `error`：异常或拒绝，使用警示色并附说明文本。
+- `idle`：默认待机状态，弱化视觉存在感。
 
-## 2. Layout Structure
+### 2.2 信息层级
 
-### 2.1 Global Layout (`Shell`)
-*   **Sidebar (Left)**: Fixed width `64px` (collapsed icon only) or `240px` (expandable). 
-    *   *Decision*: Use **Compact Sidebar (64px)** by default for Laptop screens to maximize content area.
-*   **Main Content (Right)**: Flexible area with `max-width: 1600px`.
-*   **Responsive**:
-    *   Desktop (>1024px): Sidebar + Grid Content.
-    *   Mobile (<1024px): Bottom Navigation Bar + Stacked Content.
+- 一级：结论类信息（action、review_status、PnL、风险状态）。
+- 二级：过程类信息（agent 输出摘要、关键日志）。
+- 三级：原始明细（artifact JSON、完整日志流）。
 
----
+### 2.3 文本规范
 
-## 3. Page Specifications
+- 指标与金额使用固定格式和单位。
+- 智能体输出保留原语义，避免过度重写。
+- 错误提示应可行动，优先给出下一步建议。
 
-### 3.1 Dashboard (Home) - The "Bento Box" Grid
-A 2x2 Grid layout optimized for 13" screens (1280x800).
+## 3. 布局规范
 
-*   **Grid Area 1: Market Intelligence (Top-Left)**
-    *   **Component**: `MarketOverviewCard`
-    *   **Content**: 
-        *   Mini Chart (Sparkline) of BTC/ETH/SOL.
-        *   Key Indicators: RSI (Gauge), Fear & Greed (Bar).
-        *   *Visual*: Clean data rows with +/- colors.
+### 3.1 全局布局
 
-*   **Grid Area 2: News Feed (Top-Right)**
-    *   **Component**: `NewsListCard`
-    *   **Style**: Compact list (not giant cards). 
-    *   **Content**: Title (truncate 2 lines), Source badge, Time ago, Sentiment dot (Red/Green).
-    *   *No large images* to save space.
+- 左侧：导航与页面切换。
+- 中部：核心工作区（图表、智能体、历史详情）。
+- 右侧：组合与订单侧栏（在 Dashboard 为常驻区域）。
 
-*   **Grid Area 3: Agent Workspace (Bottom-Left)**
-    *   **Component**: `AgentChatCard`
-    *   **Style**: Chat interface / Log stream.
-    *   **Content**: Stream of agent thoughts ("Thinking...", "Executing...").
-    *   *Visual*: Typewriter effect for AI text.
+### 3.2 响应式策略
 
-*   **Grid Area 4: Live Portfolio (Bottom-Right)**
-    *   **Component**: `PortfolioCard`
-    *   **Content**: Total Equity (Big Number), PnL Chart (Area chart), Active Positions table.
+- Desktop：多列布局，强调并行信息密度。
+- Tablet：减少并行列数，保留关键状态卡片。
+- Mobile：按“结论优先”折叠，详情采用抽屉或折叠面板。
 
-### 3.2 Strategy Square
-*   **Layout**: Masonry Grid or Uniform Grid (3 columns).
-*   **Card Design**:
-    *   Header: Strategy Name + Author Avatar.
-    *   Body: Performance Badge (ROI +%), Risk Level (Low/Med/High).
-    *   Footer: "Clone" button + Subscribers count.
+## 4. 页面规范
 
-### 3.3 Settings
-*   **Layout**: Split View (Left: Menu, Right: Form).
-*   **Forms**: Clean inputs with labels above. `Save` button floating at bottom right or fixed top.
+### 4.1 Dashboard
 
----
+- 必须展示：
+  - 市场概览与关键指标
+  - 智能体状态矩阵
+  - 当前会话过程输出
+  - 组合侧栏（仓位、订单、资金）
+- 智能体聚合规则：
+  - Analyst Hub 和 Strategy Committee 允许聚合子代理输出
+  - 默认展示最新输出，支持查看完整日志
 
-## 4. Component Implementation Checklist
+### 4.2 History
 
-1.  **Fix Configuration**:
-    *   [ ] Re-initialize `tailwind.config.ts` with correct paths.
-    *   [ ] Verify `postcss.config.js`.
-    *   [ ] Clean `globals.css` imports.
-    *   [ ] **CRITICAL**: Ensure `layout.tsx` imports CSS correctly.
+- 列表视图提供会话筛选与状态标签。
+- 详情视图按时间线展示日志与 artifact。
+- 拒绝会话必须突出 reject_code 与 fix_suggestions。
 
-2.  **Base Components (shadcn-like)**:
-    *   [ ] `Button` (Primary, Ghost, Outline).
-    *   [ ] `Card` (Container with standard padding/border).
-    *   [ ] `Badge` (Status indicators).
-    *   [ ] `Avatar`.
+### 4.3 Strategy
 
-3.  **Feature Components**:
-    *   [ ] `SideNav` (Compact mode).
-    *   [ ] `NewsItem` (Compact row).
-    *   [ ] `AgentLog` (Terminal style or Chat style).
+- 参数编辑区与结果区分离。
+- 高风险配置修改应有显式确认动作。
+- 钱包连接状态应在页面首屏可见。
+
+### 4.4 Settings
+
+- 系统配置分组展示，避免单页过长。
+- 保存动作必须有成功/失败反馈。
+- 关键配置变更应可回滚。
+
+## 5. 组件规范
+
+### 5.1 智能体卡片
+
+- 统一字段：名称、角色、状态点、摘要、点击详情。
+- 支持子代理 chips 与子状态聚合。
+- 聚合模式下优先展示“按代理分组的最近输出”。
+
+### 5.2 日志与 artifact
+
+- 日志按类型区分：`process`、`output`、`error`。
+- artifact 默认折叠，支持展开 JSON。
+- 时间戳与来源代理必须可见。
+
+### 5.3 图表与指标
+
+- 关键指标卡片展示最新值与计算时间。
+- 图表加载失败时提供明确错误态和重试入口。
+
+## 6. 可用性与可访问性
+
+- 键盘可达：主要操作支持 Tab/Enter。
+- 颜色冗余：状态不只依赖颜色，需有文本/图标辅助。
+- 文本可读：长文本区域支持换行与滚动，避免截断关键信息。
+
+## 7. 质量检查清单
+
+- 页面状态是否覆盖 loading / empty / error / success。
+- 会话详情是否可追踪到完整决策链路。
+- 新增组件是否复用统一状态语义与间距规范。
+- 文案是否与后端字段含义一致。

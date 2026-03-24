@@ -149,13 +149,63 @@ class PaperTradingService:
         min_slippage_cfg = self.db.query(SystemConfig).filter(SystemConfig.key == "PAPER_MIN_SLIPPAGE_BPS").first()
         taker_fee_cfg = self.db.query(SystemConfig).filter(SystemConfig.key == "PAPER_TAKER_FEE_BPS").first()
         stale_cfg = self.db.query(SystemConfig).filter(SystemConfig.key == "PAPER_MAX_PRICE_STALENESS_SECONDS").first()
+        leverage_cfg = self.db.query(SystemConfig).filter(SystemConfig.key == "PAPER_MAX_PORTFOLIO_LEVERAGE").first()
         min_slippage_bps = self._safe_float(min_slippage_cfg.value if min_slippage_cfg else None, 1.0)
         taker_fee_bps = self._safe_float(taker_fee_cfg.value if taker_fee_cfg else None, 4.0)
         max_staleness_seconds = self._safe_float(stale_cfg.value if stale_cfg else None, 180.0)
+        max_portfolio_leverage = self._safe_float(leverage_cfg.value if leverage_cfg else None, 4.0)
         return {
             "min_slippage_bps": max(0.0, min_slippage_bps),
             "taker_fee_bps": max(0.0, taker_fee_bps),
             "max_staleness_seconds": max(30.0, max_staleness_seconds),
+            "max_portfolio_leverage": max(1.0, max_portfolio_leverage),
+        }
+
+    def _current_gross_notional(self, account_id) -> Decimal:
+        positions = self.db.execute(
+            select(PaperPosition)
+            .where(PaperPosition.account_id == account_id)
+            .where(PaperPosition.status == 'OPEN')
+        ).scalars().all()
+        gross = Decimal("0")
+        for pos in positions:
+            size = Decimal(str(pos.size or 0))
+            entry = Decimal(str(pos.entry_price or 0))
+            gross += abs(size * entry)
+        return gross
+
+    def _cap_open_qty_by_leverage(
+        self,
+        account: PaperAccount,
+        candidate_qty: Decimal,
+        price: Decimal,
+        controls: dict
+    ) -> tuple[Decimal, dict]:
+        if candidate_qty <= 0 or price <= 0:
+            return Decimal("0"), {"allowed_qty": 0.0, "reason": "invalid_input"}
+        balance = Decimal(str(account.balance or 0))
+        if balance <= 0:
+            return Decimal("0"), {"allowed_qty": 0.0, "reason": "non_positive_balance"}
+        max_leverage = Decimal(str(controls["max_portfolio_leverage"]))
+        gross = self._current_gross_notional(account.id)
+        max_notional = balance * max_leverage
+        available_notional = max_notional - gross
+        if available_notional <= 0:
+            return Decimal("0"), {
+                "allowed_qty": 0.0,
+                "reason": "portfolio_leverage_too_high",
+                "gross_notional": float(gross),
+                "max_notional": float(max_notional),
+            }
+        max_qty = (available_notional / price).quantize(Decimal("0.0001"))
+        allowed_qty = min(candidate_qty, max_qty)
+        if allowed_qty < 0:
+            allowed_qty = Decimal("0")
+        return allowed_qty, {
+            "allowed_qty": float(allowed_qty),
+            "reason": "ok" if allowed_qty >= candidate_qty else "capped_by_portfolio_leverage",
+            "gross_notional": float(gross),
+            "max_notional": float(max_notional),
         }
 
     def _latest_price_staleness_seconds(self, symbol: str) -> float | None:
@@ -395,15 +445,16 @@ class PaperTradingService:
                     order.status = 'PROCESSING'
                     self.db.commit()
                     
-                    account = self.db.execute(
+                    trigger_account = self.db.execute(
                         select(PaperAccount).where(PaperAccount.id == order.account_id)
                     ).scalar_one_or_none()
-                    trigger_user_id = account.user_id if account and account.user_id is not None else 1
+                    trigger_user_id = trigger_account.user_id if trigger_account and trigger_account.user_id is not None else 1
                     _, exec_info = self.execute_market_order(
                         symbol=order.symbol,
                         side=order.side,
                         quantity=float(order.quantity),
                         current_price=curr_price,
+                        session_id=order.session_id,
                         user_id=trigger_user_id
                     )
                     
@@ -598,6 +649,24 @@ class PaperTradingService:
                             remaining_qty = Decimal("0")
                             
                     if remaining_qty > 0:
+                        allowed_qty, leverage_guard = self._cap_open_qty_by_leverage(
+                            account=account,
+                            candidate_qty=remaining_qty,
+                            price=price,
+                            controls=controls
+                        )
+                        trimmed = remaining_qty - allowed_qty
+                        if trimmed > 0:
+                            quantity -= trimmed
+                            print(f"⚠️ [PaperTrading] Leverage gate capped LONG open qty: {remaining_qty} -> {allowed_qty}")
+                        if allowed_qty <= 0:
+                            execution_info["leverage_guard"] = leverage_guard
+                            remaining_qty = Decimal("0")
+                        else:
+                            remaining_qty = allowed_qty
+                            execution_info["leverage_guard"] = leverage_guard
+
+                    if remaining_qty > 0:
                         position = PaperPosition(
                             account_id=account.id,
                             symbol=symbol,
@@ -679,6 +748,24 @@ class PaperTradingService:
                             remaining_qty = Decimal("0")
 
                     if remaining_qty > 0:
+                        allowed_qty, leverage_guard = self._cap_open_qty_by_leverage(
+                            account=account,
+                            candidate_qty=remaining_qty,
+                            price=price,
+                            controls=controls
+                        )
+                        trimmed = remaining_qty - allowed_qty
+                        if trimmed > 0:
+                            quantity -= trimmed
+                            print(f"⚠️ [PaperTrading] Leverage gate capped SHORT open qty: {remaining_qty} -> {allowed_qty}")
+                        if allowed_qty <= 0:
+                            execution_info["leverage_guard"] = leverage_guard
+                            remaining_qty = Decimal("0")
+                        else:
+                            remaining_qty = allowed_qty
+                            execution_info["leverage_guard"] = leverage_guard
+
+                    if remaining_qty > 0:
                         position = PaperPosition(
                             account_id=account.id,
                             symbol=symbol,
@@ -699,6 +786,9 @@ class PaperTradingService:
             account.balance -= fee_amount
             execution_info["pnl"] -= float(fee_amount)
 
+        if quantity <= 0 and execution_info["mode"] == "OPEN":
+            execution_info["mode"] = "REJECTED"
+
         # Create Order Record with updated final quantity
         order = PaperOrder(
             account_id=account.id,
@@ -717,8 +807,28 @@ class PaperTradingService:
         self.db.commit() # Commit to get ID
         
         execution_info["order_id"] = str(order.id)
+        execution_info["status"] = order.status
 
         return order, execution_info
+
+    def cancel_pending_orders(self, user_id: int = None, symbol: str = None) -> dict:
+        account = self.get_or_create_account(user_id)
+        query = (
+            select(PaperOrder)
+            .where(PaperOrder.account_id == account.id)
+            .where(PaperOrder.status == 'PENDING')
+        )
+        if symbol:
+            query = query.where(PaperOrder.symbol == symbol)
+        orders = self.db.execute(query).scalars().all()
+        if not orders:
+            return {"cancelled": 0, "symbol": symbol}
+        now = datetime.now(timezone.utc)
+        for o in orders:
+            o.status = "CANCELLED"
+            o.filled_at = now
+        self.db.commit()
+        return {"cancelled": len(orders), "symbol": symbol}
 
     def get_open_positions(self, user_id: int = None) -> list[PaperPosition]:
         """

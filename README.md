@@ -1,101 +1,71 @@
-# 🤖 AI Crypto Trading Platform (AI 量化决策终端)
+# AI Trading Platform
 
-[![Status](https://img.shields.io/badge/Status-Active%20Development-green)](https://github.com/your-repo)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Stack](https://img.shields.io/badge/Tech-FastAPI%20%7C%20Next.js%20%7C%20TimescaleDB-orange)](docs/TECHNICAL_DESIGN.md)
+一个面向实盘与研究场景的多智能体交易平台，覆盖行情采集、新闻情绪、策略生成、风控审核、执行与复盘全链路。
 
-> **Where Data Meets Cognitive Alpha.**  
-> 一个不仅仅是展示行情，更能“读懂”新闻、感知情绪、并像资深交易员一样思考的 AI 决策平台。
+## 你会得到什么
 
----
+- 多智能体协同决策：Analyst / Bull / Bear / PM / Reviewer / Reflector
+- 统一交易工作流：采集 → 研判 → 仲裁 → 风控 → 执行 → 复盘
+- 前后端分离架构：Next.js 16 + FastAPI + 多存储分层
+- 可审计输出：日志、artifact、历史会话、回放能力
 
-## ✨ 核心亮点 (Why This Platform?)
+## 项目结构
 
-传统的量化交易依赖于硬编码的逻辑（Logic-Driven），而本平台致力于实现 **数据驱动 (Data-Driven)** 与 **认知变现 (Cognitive Alpha)**。
+```text
+ai_trading/
+├── ai_engine/      # AI 工作流与 Agent 编排
+├── backend/        # 业务 API、交易服务、数据接口
+├── frontend/       # Web 控制台 (Next.js 16)
+├── crawler/        # 新闻/数据抓取服务
+├── scheduler/      # 调度与定时任务
+├── shared/         # 跨服务共享配置与模型
+└── docs/           # 产品、需求、架构、UI 文档
+```
 
-*   **🧠 AI 决策大脑**: 利用 LLM (GPT-4/DeepSeek) + RAG 技术，结合历史行情与实时新闻，生成具备逻辑解释的交易建议。
-*   **📰 智能情报网**: 实时聚合 CryptoPanic、Twitter 等多源信息，通过 NLP 模型自动计算情感得分（利好/利空），一眼看穿市场情绪。
-*   **⚡ 毫秒级行情**: 基于 WebSocket 的实时数据流，配合 **TimescaleDB** 高性能时序数据库，秒级计算 RSI, MACD, Bollinger Bands 等核心指标。
-*   **🔄 自我进化**: 独特的 "Reflector" Agent 机制，能对每一次交易进行复盘反思，不断优化策略逻辑。
+## 快速启动
 
-## 🚀 最新更新 (What's New in v0.2.0)
+### 前置条件
 
-*   **双数据库架构**: 将用户数据 (PostgreSQL) 与海量行情数据 (TimescaleDB) 彻底拆分，大幅提升并发读写性能。
-*   **实时指标面板**: Dashboard 新增“最新指标卡”，实时展示 SMA, EMA, ATR 等技术指标，并精确标注计算基于的 K 线时间。
-*   **数据回补 (Backfill)**: 支持一键从数据库最早记录向前回补历史数据，确保指标计算的连续性。
-*   **增强型新闻流**: 修复了新闻源聚合问题，现在能更稳定地抓取并分析全球市场动态。
+- Docker & Docker Compose
+- Node.js 20.9+
+- Python 3.10+
 
-## 🛠️ 技术栈 (Tech Stack)
+### 本地启动
 
-### Backend (The Brain)
-*   **Core**: Python 3.10+, FastAPI
-*   **AI**: LangChain, OpenAI/DeepSeek API, FinBERT (Sentiment)
-*   **Data**: 
-    *   **TimescaleDB** (Market Data & Indicators)
-    *   **PostgreSQL** (User & Strategy Config)
-    *   **ChromaDB** (Vector Memory for RAG)
-    *   **Redis** (Real-time Pub/Sub & Caching)
-*   **Task Queue**: Celery (Async Jobs)
+```bash
+git clone https://github.com/Mooka-cold/agentic_trading_platform.git
+cd agentic_trading_platform
+docker-compose up -d db-users db-market redis chromadb
+```
 
-### Frontend (The Face)
-*   **Framework**: Next.js 16 (App Router), TypeScript
-*   **UI**: Tailwind CSS, Shadcn/ui
-*   **Charts**: Lightweight-charts (TradingView style)
+```bash
+cd backend
+pip install -r requirements.txt
+python main.py
+```
 
-## 📖 文档导航 (Documentation)
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-详细的设计文档位于 `docs/` 目录下：
+## 文档入口
 
-*   [📚 需求文档 (REQUIREMENTS.md)](docs/REQUIREMENTS.md) - 核心功能列表与业务目标。
-*   [🎨 产品设计 (PRODUCT_DESIGN.md)](docs/PRODUCT_DESIGN.md) - UI/UX 交互流程与界面设计。
-*   [🏗️ 技术架构 (TECHNICAL_DESIGN.md)](docs/TECHNICAL_DESIGN.md) - 系统架构图与数据库设计。
-*   [🏛️ 系统架构 V2 (SYSTEM_ARCHITECTURE_V2.md)](docs/SYSTEM_ARCHITECTURE_V2.md) - 面向万级并发的企业级架构演进。
+- [文档总览](docs/DOCS_INDEX.md)
+- [需求文档](docs/REQUIREMENTS.md)
+- [产品设计](docs/PRODUCT_DESIGN.md)
+- [UI 规范](docs/UI_SPEC.md)
+- [技术设计](docs/TECHNICAL_DESIGN.md)
+- [系统架构 V2](docs/SYSTEM_ARCHITECTURE_V2.md)
+- [运维与发布手册](docs/OPERATIONS_RUNBOOK.md)
+- [远程部署指南](DEPLOY_GUIDE.md)
 
-## 📦 快速开始 (Getting Started)
+## 开发与发布基线
 
-### 前置要求
-*   Docker & Docker Compose
-*   Node.js 20.9+
-*   Python 3.10+
-
-### 安装步骤
-
-1.  **克隆仓库**:
-    ```bash
-    git clone https://github.com/your-username/ai-crypto-trading.git
-    cd ai-crypto-trading
-    ```
-
-2.  **启动基础服务** (DBs, Redis, Chroma):
-    ```bash
-    docker-compose up -d db-users db-market redis chromadb
-    ```
-
-3.  **启动后端**:
-    ```bash
-    cd backend
-    pip install -r requirements.txt
-    # 首次运行需初始化数据库
-    python main.py
-    ```
-
-4.  **启动前端**:
-    ```bash
-    cd frontend
-    npm install
-    npm run dev
-    ```
-
-## 🔐 依赖安全策略 (Dependency Security)
-
-前端已启用 `package.json -> overrides` 来强制覆盖高风险传递依赖版本，避免钱包生态下游包引入已知漏洞版本。
-
-当前覆盖策略位于：
-
-* `frontend/package.json` 的 `overrides`
-* 典型覆盖项：`h3`、`hono`、`socket.io-parser`
-
-建议在每次依赖升级后执行以下流程：
+- 前端：Next.js 16 + ESLint 9 + webpack 模式
+- 依赖安全：`frontend/package.json` 使用 `overrides` 锁定高风险传递依赖
+- 发布前最小检查：
 
 ```bash
 cd frontend
@@ -105,17 +75,6 @@ npm run lint
 npm run build
 ```
 
-若升级后出现兼容问题，可回滚到上一个稳定锁文件版本（恢复 `package-lock.json`）后重新安装：
+## 许可证
 
-```bash
-cd frontend
-npm install
-npm run lint
-npm run build
-```
-
-## 🤝 贡献 (Contributing)
-欢迎提交 Issue 和 Pull Request！让我们一起构建下一代 AI 交易终端。
-
-## 📄 许可证 (License)
-MIT License.
+MIT

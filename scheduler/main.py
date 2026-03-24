@@ -31,31 +31,35 @@ async def trigger_task(service_name: str, url: str, method: str = "POST"):
 # --- Tasks ---
 
 async def task_sync_1m():
-    await trigger_task("Sync 1m", f"{CRAWLER_URL}/api/v1/sync/1m")
+    # Call Crawler Service instead of Backend
+    await trigger_task("Sync 1m", f"{CRAWLER_URL}/api/v1/sync/1m", method="POST")
 
 async def task_sync_1h():
-    await trigger_task("Sync 1h", f"{CRAWLER_URL}/api/v1/sync/1h")
+    await trigger_task("Sync 1h", f"{CRAWLER_URL}/api/v1/sync/1h", method="POST")
 
 async def task_sync_1d():
-    await trigger_task("Sync 1d", f"{CRAWLER_URL}/api/v1/sync/1d")
+    await trigger_task("Sync 1d", f"{CRAWLER_URL}/api/v1/sync/1d", method="POST")
 
 async def task_sync_news():
-    await trigger_task("Sync News", f"{CRAWLER_URL}/api/v1/sync/news")
+    await trigger_task("Sync News", f"{CRAWLER_URL}/api/v1/sync/news", method="POST")
 
+# --- News Sync ---
 async def task_sync_rss():
-    await trigger_task("Sync RSS", f"{CRAWLER_URL}/api/v1/sync/rss")
+    await trigger_task("Sync RSS", f"{CRAWLER_URL}/api/v1/sync/rss", method="POST")
 
 async def task_sync_newsapi():
-    await trigger_task("Sync NewsAPI", f"{CRAWLER_URL}/api/v1/sync/newsapi")
+    await trigger_task("Sync NewsAPI", f"{CRAWLER_URL}/api/v1/sync/newsapi", method="POST")
 
 async def task_sync_cryptopanic():
-    await trigger_task("Sync CryptoPanic", f"{CRAWLER_URL}/api/v1/sync/cryptopanic")
+    await trigger_task("Sync CryptoPanic", f"{CRAWLER_URL}/api/v1/sync/cryptopanic", method="POST")
 
 async def task_sync_techflow():
-    await trigger_task("Sync TechFlow", f"{CRAWLER_URL}/api/v1/sync/techflow")
+    await trigger_task("Sync TechFlow", f"{CRAWLER_URL}/api/v1/sync/techflow", method="POST")
 
+# --- Guardian / Position Monitor ---
 async def task_monitor_positions():
-    await trigger_task("Monitor Positions", f"{BACKEND_URL}/api/v1/jobs/monitor-positions")
+    # Call Backend
+    await trigger_task("Monitor Positions", f"{BACKEND_URL}/api/v1/trade/risk/monitor", method="POST")
 
 async def task_periodic_review():
     # Trigger AI Engine's Reflector to check for pending reviews

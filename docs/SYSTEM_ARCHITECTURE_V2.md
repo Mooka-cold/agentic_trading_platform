@@ -1,147 +1,91 @@
-# AI Trading Platform - System Architecture V2 (Enterprise Grade)
+# 系统架构 V2（可扩展版）
 
-## 1. Executive Summary
-This architecture is designed to support **10,000+ concurrent users**, decoupling data acquisition from strategy execution, and ensuring high availability and scalability.
+## 1. 目标
 
-**Key Design Principles:**
-*   **Decoupling**: Market data crawlers and strategy engines are completely separated via Database/Message Queue.
-*   **Statelessness**: Application servers are stateless to allow horizontal scaling (Kubernetes HPA).
-*   **Persistence**: All critical data (Prompts, Strategies, Orders) is stored in enterprise-grade databases, not local files.
-*   **Real-time**: Utilizing Redis Pub/Sub and TimescaleDB for millisecond-level latency.
+V2 架构的目标是让系统在复杂业务下保持：
 
----
+- 可扩展：服务可按职责水平扩容
+- 可观测：会话、日志、执行状态可追踪
+- 可恢复：失败可重试、可降级、可回滚
 
-## 2. Core Architecture Components
+## 2. 架构原则
 
-### 2.1 User & Identity Management (IAM)
-*   **Service**: `User Service` (FastAPI)
-*   **Database**: PostgreSQL (`users`, `roles`, `permissions`)
-*   **Auth**: JWT (JSON Web Tokens) with refresh mechanism.
-*   **Features**:
-    *   User Registration/Login (Email/Social).
-    *   API Key Management (Encrypted storage via AES-256).
-    *   Subscription Plans (Free, Pro, Institutional).
+- 解耦：采集、决策、执行、展示分层清晰
+- 无状态：应用节点尽量无状态，状态落库
+- 事件驱动：通过消息与日志驱动工作流推进
+- 安全优先：依赖安全与配置安全纳入发布基线
 
-### 2.2 Data Pipeline (The "Bloodstream")
-The data flow follows a **Write-Heavy / Read-Heavy segregation** pattern.
+## 3. 组件拓扑
 
-1.  **Crawlers (Producers)**:
-    *   Cluster of lightweight Python scripts (`ccxt`, `websockets`).
-    *   Fetch K-lines, Order Books, and News (CryptoPanic/Twitter).
-    *   **Write To**: 
-        *   **Hot Data**: Redis Pub/Sub (Topic: `market.btc_usdt.kline.1m`) for real-time strategy triggers.
-        *   **Cold Data**: TimescaleDB (Hypertable) for historical backtesting and persistence.
-    
-2.  **Database Layer**:
-    *   **TimescaleDB**: Stores massive amounts of market data (Ticks, K-lines). Optimized for time-series queries.
-    *   **ChromaDB**: Stores news embeddings for RAG (Retrieval-Augmented Generation).
+### 3.1 交互层
 
-### 2.3 Strategy Engine (The "Brain")
-*   **Trigger**: Event-driven. Listens to Redis Pub/Sub or periodic Scheduler (Celery).
-*   **Context Loading**: 
-    *   Fetches User's Strategy Config & Prompts from **PostgreSQL**.
-    *   Fetches Historical Data from **TimescaleDB**.
-*   **Execution**: 
-    *   Runs LLM Inference (DeepSeek/GPT-4).
-    *   Generates Signals (`BUY`/`SELL`).
-*   **Output**: Pushes Signal to `Order Queue` (RabbitMQ).
+- Frontend（Next.js 16）
+  - Dashboard / History / Strategy / Settings
+  - API Route 代理与展示编排
 
-### 2.4 Execution System
-*   **Service**: `Order Service`
-*   **Input**: Consumes signals from `Order Queue`.
-*   **Action**: 
-    *   Risk Check (Pre-trade validation).
-    *   Route to specific Exchange API (Binance/Okx) via User's API Key.
-*   **Feedback**: Updates Order Status in PostgreSQL.
+### 3.2 应用层
 
----
+- backend（FastAPI）
+  - 统一对外 API
+  - 交易执行服务与会话查询
+- ai_engine
+  - 多智能体工作流
+  - 状态构建、仲裁、风控、复盘
 
-## 3. Database Schema Design
+### 3.3 数据层
 
-### 3.1 PostgreSQL (Business Data)
-```sql
--- Users
-CREATE TABLE users (
-    id UUID PRIMARY KEY,
-    email VARCHAR UNIQUE,
-    password_hash VARCHAR,
-    tier VARCHAR DEFAULT 'free', -- 'free', 'pro'
-    created_at TIMESTAMP
-);
+- TimescaleDB：行情与技术指标
+- PostgreSQL：会话、订单、业务配置
+- Redis：实时流与缓存
+- ChromaDB：向量检索
 
--- Strategies
-CREATE TABLE strategies (
-    id UUID PRIMARY KEY,
-    user_id UUID REFERENCES users(id),
-    name VARCHAR,
-    prompt_template TEXT, -- The LLM Prompt
-    config JSONB, -- { "symbols": ["BTC/USDT"], "timeframe": "1h", "risk": "medium" }
-    status VARCHAR, -- 'active', 'paused', 'backtesting'
-    created_at TIMESTAMP
-);
+### 3.4 采集与调度层
 
--- Orders
-CREATE TABLE orders (
-    id UUID PRIMARY KEY,
-    strategy_id UUID REFERENCES strategies(id),
-    symbol VARCHAR,
-    side VARCHAR, -- 'BUY', 'SELL'
-    price DECIMAL,
-    amount DECIMAL,
-    status VARCHAR, -- 'filled', 'pending', 'failed'
-    exchange_order_id VARCHAR
-);
-```
+- crawler：新闻与外部情报采集
+- scheduler：周期触发与任务编排
 
-### 3.2 TimescaleDB (Market Data)
-```sql
--- K-Lines (Hypertable)
-CREATE TABLE market_klines (
-    time TIMESTAMPTZ NOT NULL,
-    symbol VARCHAR NOT NULL,
-    interval VARCHAR NOT NULL, -- '1m', '1h', '1d'
-    open DECIMAL,
-    high DECIMAL,
-    low DECIMAL,
-    close DECIMAL,
-    volume DECIMAL,
-    source VARCHAR, -- 'binance', 'coinbase'
-    PRIMARY KEY (time, symbol, interval)
-);
-SELECT create_hypertable('market_klines', 'time');
-```
+## 4. 关键数据流
 
----
+1. crawler/streamer 写入行情与新闻数据
+2. ai_engine 构建会话状态并触发多智能体流程
+3. reviewer 输出风控结论与修复建议
+4. execution 执行交易并回写状态
+5. reflector 沉淀复盘并写入历史可查询记录
 
-## 4. Scaling to 10k Users
+## 5. 扩展策略（10k+ 用户）
 
-### 4.1 Bottlenecks & Solutions
-1.  **LLM API Limits**: 
-    *   *Solution*: Implement a **Token Bucket Rate Limiter** per user. Queue requests if global limit is reached.
-2.  **Database Connections**:
-    *   *Solution*: Use **PgBouncer** for connection pooling.
-3.  **Crawler Latency**:
-    *   *Solution*: Shard crawlers by symbol (Crawler A: BTC-ETH, Crawler B: SOL-AVAX).
+### 5.1 应用扩展
 
-### 4.2 Deployment Topology
-*   **K8s Cluster**:
-    *   `frontend-deployment`: 3 Replicas (Auto-scale to 10).
-    *   `backend-api`: 5 Replicas.
-    *   `strategy-worker`: 10+ Replicas (CPU Intensive).
-    *   `crawler-worker`: StatefulSet (Partitioned by symbols).
+- frontend、backend、ai_engine 可独立扩容
+- 计算密集型工作负载与 API 节点分离
 
-### 4.3 Frontend Dependency Security Baseline
-*   Frontend runtime baseline:
-    *   **Next.js 16+**
-    *   **Node.js 20.9+**
-*   Frontend enforces security patches for transitive dependencies through `frontend/package.json -> overrides`.
-*   Current forced minimum safe versions:
-    *   `h3`: `^1.15.10`
-    *   `hono`: `^4.12.7`
-    *   `socket.io-parser`: `^4.2.6`
+### 5.2 数据扩展
 
-### 4.4 Upgrade Validation & Rollback SOP
-After any upgrade to `next`, wallet stack (`wagmi`, `@rainbow-me/rainbowkit`), or lockfile refresh:
+- 时序写入与业务写入分库
+- 连接池与限流并行治理
+- 热数据缓存与冷数据分层查询
+
+### 5.3 工作流扩展
+
+- 按 symbol / session 维度并发隔离
+- 失败重试与超时熔断策略标准化
+
+## 6. 依赖与发布安全基线
+
+### 6.1 运行时基线
+
+- Next.js 16+
+- Node.js 20.9+
+
+### 6.2 前端依赖安全覆盖
+
+通过 `frontend/package.json -> overrides` 固定高风险传递依赖最低安全版本：
+
+- h3: ^1.15.10
+- hono: ^4.12.7
+- socket.io-parser: ^4.2.6
+
+### 6.3 发布校验 SOP
 
 ```bash
 cd frontend
@@ -151,7 +95,7 @@ npm run lint
 npm run build
 ```
 
-If compatibility issues occur, revert to the last stable lockfile and re-run install + checks:
+### 6.4 回滚 SOP
 
 ```bash
 cd frontend
@@ -160,26 +104,19 @@ npm run lint
 npm run build
 ```
 
----
+## 7. 演进路线
 
-## 5. Implementation Roadmap
+### 阶段 A：稳定性
 
-### Phase 1: Foundation (Current - Mostly Completed)
-*   [x] Basic Frontend UI (Dashboard, News Feed, Indicators).
-*   [x] Setup PostgreSQL (User/Strategy) & TimescaleDB (Market Data) Docker containers.
-*   [x] Implement Market Streamer with real-time indicator calculation.
-*   [x] Implement News Crawler & Sentiment Analysis.
-*   [x] Backfill historical market data.
+- 强化会话状态机与错误分类
+- 完善审计日志和历史检索能力
 
-### Phase 2: User System
-*   [ ] Implement Auth (Login/Register).
-*   [ ] Create "My Strategies" CRUD API.
+### 阶段 B：扩展性
 
-### Phase 3: Data Decoupling
-*   [ ] Build standalone `Crawler Service`.
-*   [ ] Write market data to TimescaleDB.
-*   [ ] Refactor Strategy Engine to read from DB instead of API.
+- 引入更细粒度队列与优先级调度
+- 拆分更多可独立扩容的执行单元
 
-### Phase 4: Scale
-*   [ ] Introduce Redis Pub/Sub for live signals.
-*   [ ] Deploy on Kubernetes.
+### 阶段 C：企业化
+
+- 多租户隔离与权限治理
+- 灰度发布与自动回滚能力
