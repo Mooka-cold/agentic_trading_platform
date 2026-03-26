@@ -715,11 +715,20 @@ class Reviewer(BaseAgent):
                     
                     state.execution_result = data # Save result for Reflector
                     
-                    if data.get("status") == "FILLED":
+                    exec_status = str(data.get("status") or "").upper()
+                    if exec_status == "FILLED":
                         mode = data.get('mode', 'UNKNOWN')
                         pnl = data.get('pnl', 0.0)
                         pnl_str = f" | PnL: {pnl:.2f}" if pnl != 0 else ""
-                        await self.say(f"EXECUTED [{mode}]: {data['status']} @ {data['executed_price']}. New Bal: {data['new_balance']}{pnl_str}", session_id)
+                        executed_price = data.get("executed_price")
+                        if executed_price is None:
+                            executed_price = state.market_data.price
+                        await self.say(f"EXECUTED [{mode}]: {data.get('status')} @ {executed_price}. New Bal: {data.get('new_balance')}{pnl_str}", session_id)
+                    elif exec_status == "ACCEPTED":
+                        await self.say(
+                            f"ORDER ACCEPTED [{data.get('mode', 'UNKNOWN')}]: pending trigger/fill. Ref Price: {data.get('executed_price')}",
+                            session_id
+                        )
                     else:
                         await self.think(f"Execution Failed: {data.get('message')}", session_id)
                             

@@ -67,7 +67,8 @@ class ExecutionService:
         print(f"[Execution] Starting TWAP: {quantity} {symbol} split into {chunks} chunks of {chunk_size}")
         
         last_result = None
-        successful_chunks = 0
+        filled_chunks = 0
+        accepted_chunks = 0
         total_executed = 0.0
         
         for i in range(chunks):
@@ -79,9 +80,13 @@ class ExecutionService:
                 session_id, stop_loss, take_profit, order_type, trigger_condition, f"twap-{i+1}"
             )
             
-            if result.get("status") == "FILLED" or result.get("status") == "ACCEPTED":
-                successful_chunks += 1
+            status = str(result.get("status") or "").upper()
+            if status == "FILLED":
+                filled_chunks += 1
                 total_executed += current_qty
+                last_result = result
+            elif status == "ACCEPTED":
+                accepted_chunks += 1
                 last_result = result
             else:
                 print(f"[Execution] TWAP Chunk {i+1} failed: {result.get('message')}")
@@ -91,13 +96,17 @@ class ExecutionService:
             if i < chunks - 1:
                 await asyncio.sleep(5.0) # Wait 5 seconds between chunks
                 
-        if successful_chunks == 0:
+        if filled_chunks == 0 and accepted_chunks == 0:
             return last_result or {"status": "error", "message": "All TWAP chunks failed"}
-            
-        # Return the last successful result, but modified to reflect partial/full fill
-        status = "FILLED" if successful_chunks == chunks else "PARTIAL_FILLED"
+
+        if filled_chunks == 0 and accepted_chunks > 0:
+            last_result["status"] = "ACCEPTED"
+            last_result["message"] = f"TWAP Submitted. Accepted {accepted_chunks}/{chunks} chunks. Awaiting trigger/fill."
+            return last_result
+
+        status = "FILLED" if filled_chunks == chunks else "PARTIAL_FILLED"
         last_result["status"] = status
-        last_result["message"] = f"TWAP Completed. Executed {successful_chunks}/{chunks} chunks. Total: {total_executed}"
+        last_result["message"] = f"TWAP Completed. Filled {filled_chunks}/{chunks} chunks. Total: {total_executed}"
         return last_result
 
     async def _send_to_backend(
