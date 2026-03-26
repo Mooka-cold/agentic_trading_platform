@@ -22,42 +22,36 @@ class OnChainCrawlerService:
 
     def _fetch_oi(self, symbol):
         try:
-            # Using Coinglass public API (This might fail due to WAF or Endpoint deprecation)
-            # Update to newer endpoint if available
-            url = f"https://fapi.coinglass.com/api/futures/openInterest/chart?symbol={symbol}&interval=1h"
-            res = requests.get(url, headers=self.headers, timeout=5)
-            
-            if res.status_code == 200 and res.json().get("code") == "0":
-                data_list = res.json().get("data", {}).get("dataMap", {}).get("Binance", [])
-                if data_list:
-                    latest_oi = data_list[-1]
-                    self._upsert_metric(f"{symbol}_OI", symbol, "OI", latest_oi, "USD")
+            oi_url = f"https://fapi.binance.com/fapi/v1/openInterest?symbol={symbol}USDT"
+            mark_url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}USDT"
+            oi_res = requests.get(oi_url, headers=self.headers, timeout=5)
+            mark_res = requests.get(mark_url, headers=self.headers, timeout=5)
+            if oi_res.status_code == 200 and mark_res.status_code == 200:
+                oi_payload = oi_res.json()
+                mark_payload = mark_res.json()
+                oi_contracts = float(oi_payload.get("openInterest", 0.0) or 0.0)
+                mark_price = float(mark_payload.get("markPrice", 0.0) or 0.0)
+                if oi_contracts > 0 and mark_price > 0:
+                    latest_oi_usd = oi_contracts * mark_price
+                    self._upsert_metric(f"{symbol}_OI", symbol, "OI", latest_oi_usd, "USD")
                     return
-            else:
-                logger.warning(f"Coinglass OI API failed or 404 for {symbol}")
-                
+            logger.warning(f"Binance OI API failed for {symbol}: oi={oi_res.status_code}, mark={mark_res.status_code}")
         except Exception as e:
             logger.error(f"Failed to fetch OI for {symbol}: {e}")
 
     def _fetch_ls_ratio(self, symbol):
         try:
-            # Long/Short Ratio (Global)
-            url = f"https://fapi.coinglass.com/api/futures/longShortRate?symbol={symbol}&timeType=1"
+            url = f"https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol={symbol}USDT&period=5m&limit=1"
             res = requests.get(url, headers=self.headers, timeout=5)
-            
-            if res.status_code == 200 and res.json().get("code") == "0":
-                data_list = res.json().get("data", [])
-                if data_list:
-                    # Just take Binance or global avg
-                    for item in data_list:
-                        if item.get("exchangeName") == "Binance":
-                            ls_ratio = item.get("longShortRatio")
-                            if ls_ratio:
-                                self._upsert_metric(f"{symbol}_LS_RATIO", symbol, "LS_RATIO", ls_ratio, "Ratio")
-                                return
-            else:
-                logger.warning(f"Coinglass LS API failed or 404 for {symbol}")
-                
+            if res.status_code == 200:
+                data_list = res.json()
+                if isinstance(data_list, list) and data_list:
+                    latest = data_list[-1]
+                    ls_ratio = float(latest.get("longShortRatio", 0.0) or 0.0)
+                    if ls_ratio > 0:
+                        self._upsert_metric(f"{symbol}_LS_RATIO", symbol, "LS_RATIO", ls_ratio, "Ratio")
+                        return
+            logger.warning(f"Binance LS Ratio API failed for {symbol}: status={res.status_code}")
         except Exception as e:
             logger.error(f"Failed to fetch LS Ratio for {symbol}: {e}")
 

@@ -197,19 +197,31 @@ class WorkflowEngine:
                     artifact=state_build.artifact,
                 )
                 if not safety.get("allowed", True):
-                    await self.analyst.emit_log(
-                        content=f"🚨 SAFETY_GUARD: {safety.get('reason')}. Session halted.",
-                        log_type="error",
-                        session_id=session_id,
-                        artifact=safety,
-                    )
-                    # 业务级熔断(Kill Switch)不应算作系统运行失败(FAILED)
-                    # 它是系统在极高风险下主动做出的安全决策，相当于一个强制的 "HOLD"
-                    await workflow_session_api.mark_completed(
-                        session_id=session_id,
-                        payload={"review_status": "REJECTED"},
-                    )
-                    return None
+                    safety_reason = str(safety.get("reason") or "")
+                    if safety_reason == "portfolio_leverage_too_high":
+                        if state.execution_constraints is None:
+                            state.execution_constraints = {}
+                        state.execution_constraints["deleveraging_required"] = True
+                        state.execution_constraints["reduce_only"] = True
+                        state.execution_constraints["deleveraging_reason"] = "portfolio_leverage_too_high"
+                        await self.analyst.emit_log(
+                            content="⚠️ SAFETY_GUARD: portfolio_leverage_too_high. Continue in DELEVERAGING mode (strategy can only reduce risk).",
+                            log_type="warning",
+                            session_id=session_id,
+                            artifact=safety,
+                        )
+                    else:
+                        await self.analyst.emit_log(
+                            content=f"🚨 SAFETY_GUARD: {safety_reason}. Session halted.",
+                            log_type="error",
+                            session_id=session_id,
+                            artifact=safety,
+                        )
+                        await workflow_session_api.mark_completed(
+                            session_id=session_id,
+                            payload={"review_status": "REJECTED"},
+                        )
+                        return None
 
                 graph_inputs = {
                     "agent_state": state,

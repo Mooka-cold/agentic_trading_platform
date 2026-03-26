@@ -74,6 +74,13 @@ class WorkflowStateBuilder:
             micro=microstructure,
             portfolio=portfolio_context,
         )
+        if safety.get("reason") == "portfolio_leverage_too_high":
+            execution_constraints["deleveraging_required"] = True
+            execution_constraints["reduce_only"] = True
+            execution_constraints["deleveraging_reason"] = "portfolio_leverage_too_high"
+            execution_constraints["current_implied_leverage"] = float(portfolio_context.get("implied_leverage", 0.0) or 0.0)
+            execution_constraints["target_max_leverage"] = 4.0
+            unresolved_todos.append("进入去杠杆模式: 禁止新增风险敞口，优先减仓")
         if not safety.get("allowed", True):
             unresolved_todos.append(f"触发保护机制: {safety.get('reason')}")
 

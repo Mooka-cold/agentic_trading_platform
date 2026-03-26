@@ -120,6 +120,46 @@ class PortfolioManager(BaseAgent):
                     f"Reviewer feedback received but no auto-applicable patch: {json.dumps(state.review_feedback.get('fix_suggestions') or {}, ensure_ascii=False)}",
                     session_id
                 )
+            constraints = state.execution_constraints or {}
+            if bool(constraints.get("deleveraging_required")):
+                symbol_positions = [p for p in (state.positions or []) if p.get("symbol") == state.market_data.symbol]
+                long_size = sum(float(p.get("size", p.get("quantity", 0.0)) or 0.0) for p in symbol_positions if str(p.get("side", "")).upper() in ["LONG", "BUY"])
+                short_size = sum(float(p.get("size", p.get("quantity", 0.0)) or 0.0) for p in symbol_positions if str(p.get("side", "")).upper() in ["SHORT", "SELL"])
+                raw_action = str(proposal.action or "HOLD").upper()
+                if raw_action in ["BUY", "LONG", "SHORT"]:
+                    if long_size > 0:
+                        reduce_qty = min(long_size, max(round(long_size * 0.15, 6), 0.001))
+                        proposal.action = "SELL"
+                        proposal.order_type = "MARKET"
+                        proposal.trigger_condition = None
+                        proposal.entry_price = None
+                        proposal.quantity = reduce_qty
+                        proposal.stop_loss = None
+                        proposal.take_profit = None
+                        proposal.confidence = min(float(proposal.confidence or 0.0), 0.45)
+                        proposal.reasoning = f"DELEVERAGE_OVERRIDE: leverage too high, reduce long exposure by {reduce_qty}."
+                    elif short_size > 0:
+                        reduce_qty = min(short_size, max(round(short_size * 0.15, 6), 0.001))
+                        proposal.action = "COVER"
+                        proposal.order_type = "MARKET"
+                        proposal.trigger_condition = None
+                        proposal.entry_price = None
+                        proposal.quantity = reduce_qty
+                        proposal.stop_loss = None
+                        proposal.take_profit = None
+                        proposal.confidence = min(float(proposal.confidence or 0.0), 0.45)
+                        proposal.reasoning = f"DELEVERAGE_OVERRIDE: leverage too high, reduce short exposure by {reduce_qty}."
+                    else:
+                        proposal.action = "HOLD"
+                        proposal.order_type = "MARKET"
+                        proposal.trigger_condition = None
+                        proposal.entry_price = None
+                        proposal.quantity = None
+                        proposal.stop_loss = None
+                        proposal.take_profit = None
+                        proposal.confidence = min(float(proposal.confidence or 0.0), 0.35)
+                        proposal.reasoning = "DELEVERAGE_OVERRIDE: leverage high but no matching position to reduce."
+                    await self.think("Deleveraging mode active: blocked risk-increasing action and converted to risk reduction.", session_id)
             await self.think(f"Arbitration Complete. Chosen Action: {proposal.action}", session_id)
             return {"strategy_proposal": proposal}
 

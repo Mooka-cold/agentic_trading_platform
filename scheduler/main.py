@@ -59,7 +59,7 @@ async def task_sync_techflow():
 # --- Guardian / Position Monitor ---
 async def task_monitor_positions():
     # Call Backend
-    await trigger_task("Monitor Positions", f"{BACKEND_URL}/api/v1/trade/risk/monitor", method="POST")
+    await trigger_task("Monitor Positions", f"{BACKEND_URL}/api/v1/jobs/monitor-positions", method="POST")
 
 async def task_periodic_review():
     # Trigger AI Engine's Reflector to check for pending reviews
@@ -75,6 +75,10 @@ async def task_reset_daily_risk_metrics():
 async def task_sync_macro():
     # Call Crawler Service
     await trigger_task("Sync Macro Data", f"{CRAWLER_URL}/api/v1/trigger/macro", method="POST")
+
+async def task_sync_onchain():
+    # Call Crawler Service
+    await trigger_task("Sync On-Chain Data", f"{CRAWLER_URL}/api/v1/trigger/onchain", method="POST")
 
 async def task_run_sentiment_interpreter():
     await trigger_task("Run Sentiment Interpreter", f"{AI_ENGINE_URL}/sentiment/interpreter/run")
@@ -125,8 +129,9 @@ async def main():
     # Changed from 15 min to 5 min to catch missed reviews faster after restart
     scheduler.add_job(task_periodic_review, "interval", minutes=5, id="periodic_review")
 
-    # 5. Macro Sync (Hourly)
+    # 5. Macro/On-Chain Sync
     scheduler.add_job(task_sync_macro, "interval", hours=1, id="sync_macro")
+    scheduler.add_job(task_sync_onchain, "interval", minutes=5, id="sync_onchain")
     
     # 6. Maintenance
     scheduler.add_job(task_reset_daily_risk_metrics, "cron", hour=0, minute=0, id="reset_daily_risk_metrics")
