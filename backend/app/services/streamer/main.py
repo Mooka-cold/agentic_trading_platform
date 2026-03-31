@@ -11,12 +11,12 @@ from sqlalchemy import select, desc
 from app.db.session import SessionLocalUser, SessionLocalMarket
 from shared.models.market import MarketKline
 from app.core.config import settings
+from shared.core.symbols import get_schedule_symbols_from_env, get_schedule_timeframes_from_env
 
 # Configuration
 REDIS_URL = settings.REDIS_URL
-SYMBOL = "BTC/USDT"
-EXCHANGE_SYMBOL = "BTC-USDT-SWAP" # OKX Format
-TIMEFRAME = "1m"
+STREAM_SYMBOLS = get_schedule_symbols_from_env("MARKET_STREAM_SYMBOLS")
+TIMEFRAME = os.getenv("MARKET_STREAM_TIMEFRAME", get_schedule_timeframes_from_env()[0])
 HISTORY_LIMIT = 100 # Need enough for EMA/RSI calculation
 
 logger = logging.getLogger("market_streamer")
@@ -25,89 +25,81 @@ class MarketStreamer:
     def __init__(self):
         self.redis = redis.from_url(REDIS_URL, decode_responses=True)
         self.market_db = SessionLocalMarket
-        self.df = pd.DataFrame()
+        self.symbols = STREAM_SYMBOLS
+        self.timeframe = TIMEFRAME
+        self.df_by_symbol: dict[str, pd.DataFrame] = {}
+        self.exchange_symbols = {symbol: self._to_okx_inst_id(symbol) for symbol in self.symbols}
         self.last_ts = None
+
+    @staticmethod
+    def _to_okx_inst_id(symbol: str) -> str:
+        base_quote = symbol.replace("/", "-")
+        return f"{base_quote}-SWAP"
+
+    @staticmethod
+    def _to_okx_bar(timeframe: str) -> str:
+        if timeframe.endswith("h"):
+            return f"{timeframe[:-1]}H"
+        if timeframe.endswith("d"):
+            return f"{timeframe[:-1]}D"
+        return timeframe
         
     async def warmup(self):
-        """
-        Load historical klines from DB to initialize indicators
-        """
-        logger.info(f"🔥 Warming up with {HISTORY_LIMIT} candles from DB...")
+        logger.info(f"🔥 Warming up with {HISTORY_LIMIT} candles from DB for {self.symbols} @ {self.timeframe}")
         try:
-            # Use raw SQL or ORM to fetch recent klines
-            # Assuming MarketKline table stores 1m data
-            query = select(MarketKline).where(
-                MarketKline.symbol == SYMBOL,
-                MarketKline.interval == TIMEFRAME
-            ).order_by(desc(MarketKline.time)).limit(HISTORY_LIMIT)
-            
-            session = self.market_db()
-            try:
-                klines = session.execute(query).scalars().all()
-                if not klines:
-                    logger.warning("⚠️ No history found in DB. Streamer starting cold.")
-                    return
-                
-                # Check for gap
-                last_kline = klines[0] # desc order, so first is latest
-                now = datetime.now(timezone.utc)
-                diff = now - last_kline.time
-                
-                # If gap > 2 minutes (allow some latency), backfill
-                if diff.total_seconds() > 120:
-                    logger.warning(f"⚠️ Data gap detected: {diff}. Last DB time: {last_kline.time}. Backfilling...")
-                    await self.backfill_gap(last_kline.time)
-                    # Re-fetch after backfill
+            for symbol in self.symbols:
+                query = select(MarketKline).where(
+                    MarketKline.symbol == symbol,
+                    MarketKline.interval == self.timeframe
+                ).order_by(desc(MarketKline.time)).limit(HISTORY_LIMIT)
+                session = self.market_db()
+                try:
                     klines = session.execute(query).scalars().all()
-                    
-            finally:
-                session.close()
-
-            if not klines:
-                return
-
-            # Sort ascending for calculation
-            klines = sorted(klines, key=lambda x: x.time)
-            
-            data = [{
-                "time": k.time,
-                "open": k.open,
-                "high": k.high,
-                "low": k.low,
-                "close": k.close,
-                "volume": k.volume
-            } for k in klines]
-            
-            self.df = pd.DataFrame(data)
-            self.df.set_index('time', inplace=True)
-            logger.info(f"✅ Warmup complete. Last candle: {self.df.index[-1]}")
+                    if not klines:
+                        logger.warning(f"⚠️ No history found in DB for {symbol}. Streamer starting cold.")
+                        continue
+                    last_kline = klines[0]
+                    now = datetime.now(timezone.utc)
+                    diff = now - last_kline.time
+                    if diff.total_seconds() > 120:
+                        logger.warning(f"⚠️ Data gap detected for {symbol}: {diff}. Last DB time: {last_kline.time}. Backfilling...")
+                        await self.backfill_gap(symbol, last_kline.time)
+                        klines = session.execute(query).scalars().all()
+                finally:
+                    session.close()
+                if not klines:
+                    continue
+                klines = sorted(klines, key=lambda x: x.time)
+                data = [{
+                    "time": k.time,
+                    "open": k.open,
+                    "high": k.high,
+                    "low": k.low,
+                    "close": k.close,
+                    "volume": k.volume
+                } for k in klines]
+                df = pd.DataFrame(data)
+                df.set_index('time', inplace=True)
+                self.df_by_symbol[symbol] = df
+                logger.info(f"✅ Warmup complete for {symbol}. Last candle: {df.index[-1]}")
         except Exception as e:
             logger.error(f"Warmup failed: {e}")
             
-    async def backfill_gap(self, last_db_time: datetime):
-        """
-        Use CCXT to fetch missing candles between last_db_time and NOW.
-        Calculate indicators for them and save to DB.
-        """
+    async def backfill_gap(self, symbol: str, last_db_time: datetime):
         import ccxt.async_support as ccxt
         
         exchange = ccxt.binance()
         try:
-            # Calculate number of missing candles
-            now = datetime.now(timezone.utc)
-            # Binance limit is 1000
-            # Timeframe is 1m
             since = int(last_db_time.timestamp() * 1000)
             
-            logger.info(f"🔄 Backfilling from {last_db_time} via CCXT...")
+            logger.info(f"🔄 Backfilling {symbol} from {last_db_time} via CCXT...")
             
-            ohlcv = await exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, since=since, limit=1000)
+            ohlcv = await exchange.fetch_ohlcv(symbol, self.timeframe, since=since, limit=1000)
             
             if not ohlcv:
                 logger.warning("Backfill returned no data.")
                 return
 
-            # Filter out already existing (first one usually overlaps)
             new_candles = []
             for candle in ohlcv:
                 ts = pd.to_datetime(candle[0], unit='ms', utc=True)
@@ -127,12 +119,9 @@ class MarketStreamer:
 
             logger.info(f"📥 Found {len(new_candles)} missing candles. Processing...")
             
-            # Process each candle sequentially to update DF and Indicators
             for c in new_candles:
-                # Update DF and calculate indicators (this updates self.df state)
-                indicators = self.calculate_indicators(c)
-                # Save to DB
-                await self.save_to_db(c, indicators)
+                indicators = self.calculate_indicators(symbol, c)
+                await self.save_to_db(symbol, c, indicators)
                 
             logger.info("✅ Backfill complete.")
             
@@ -141,11 +130,7 @@ class MarketStreamer:
         finally:
             await exchange.close()
             
-    def calculate_indicators(self, new_candle: dict) -> dict:
-        """
-        Append new candle (or update current), calc indicators, return latest values
-        """
-        # Convert new_candle to Series
+    def calculate_indicators(self, symbol: str, new_candle: dict) -> dict:
         ts = pd.to_datetime(int(new_candle['ts']), unit='ms', utc=True)
         
         row = pd.Series({
@@ -156,20 +141,21 @@ class MarketStreamer:
             "volume": float(new_candle['vol'])
         }, name=ts)
 
-        # Update DataFrame
-        # If timestamp exists (update current unclosed candle), replace it
-        # If new timestamp, append
-        if not self.df.empty and ts == self.df.index[-1]:
-            self.df.iloc[-1] = row
+        df = self.df_by_symbol.get(symbol)
+        if df is None or df.empty:
+            df = pd.DataFrame([row])
+            df.index = [ts]
+        elif ts == df.index[-1]:
+            df.iloc[-1] = row
         else:
-            self.df = pd.concat([self.df, pd.DataFrame([row])])
+            df = pd.concat([df, pd.DataFrame([row])])
             
-        # Keep fixed window size to prevent memory leak
-        if len(self.df) > HISTORY_LIMIT + 10:
-            self.df = self.df.iloc[-HISTORY_LIMIT:]
+        if len(df) > HISTORY_LIMIT + 10:
+            df = df.iloc[-HISTORY_LIMIT:]
+        self.df_by_symbol[symbol] = df
 
         try:
-            df = self.df.copy()
+            df = df.copy()
 
             delta = df['close'].diff()
             gain = delta.where(delta > 0, 0).rolling(window=14).mean()
@@ -225,10 +211,10 @@ class MarketStreamer:
             logger.error(f"Indicator calc failed: {e}")
             return {}
 
-    async def save_to_redis(self, indicators: dict):
+    async def save_to_redis(self, symbol: str, indicators: dict):
         if not indicators: return
         
-        key = f"market:{SYMBOL}:realtime"
+        key = f"market:{symbol}:realtime"
         
         # Add timestamp for freshness check
         indicators['updated_at'] = datetime.now().timestamp()
@@ -243,10 +229,7 @@ class MarketStreamer:
             
         # logger.debug(f"Pushed to Redis: RSI={indicators.get('rsi_14'):.2f}")
 
-    async def save_to_db(self, candle_data: dict, indicators: dict):
-        """
-        Persist CLOSED candle with indicators to DB
-        """
+    async def save_to_db(self, symbol: str, candle_data: dict, indicators: dict):
         try:
             def _sanitize(value):
                 if value is None:
@@ -268,8 +251,8 @@ class MarketStreamer:
             try:
                 kline = MarketKline(
                     time=ts,
-                    symbol=SYMBOL,
-                    interval=TIMEFRAME,
+                    symbol=symbol,
+                    interval=self.timeframe,
                     source="okx",
                     open=float(candle_data['o']),
                     high=float(candle_data['h']),
@@ -292,7 +275,7 @@ class MarketStreamer:
                 )
                 session.merge(kline)
                 session.commit()
-                logger.info(f"💾 Saved closed candle {ts} to DB")
+                logger.info(f"💾 Saved closed candle {symbol} {ts} to DB")
             finally:
                 session.close()
                 
@@ -301,73 +284,55 @@ class MarketStreamer:
 
     async def run(self):
         await self.warmup()
-        
-        # Fallback: Use REST API polling if WebSocket fails
-        # OKX REST Endpoint
         import httpx
-        
-        logger.info(f"� Starting Market Streamer for {EXCHANGE_SYMBOL}...")
+        bar = self._to_okx_bar(self.timeframe)
+        logger.info(f"🚀 Starting Market Streamer for {self.symbols} @ {self.timeframe}")
         
         while True:
             try:
-                # Polling Interval (3s)
+                current_prices = {}
                 async with httpx.AsyncClient() as client:
-                    # Get latest candle (limit=1)
-                    # OKX API: GET /api/v5/market/candles
-                    url = f"https://www.okx.com/api/v5/market/candles?instId={EXCHANGE_SYMBOL}&bar=1m&limit=1"
-                    
-                    try:
-                        resp = await client.get(url, timeout=5)
-                        data = resp.json()
-                        
-                        if data.get("code") == "0" and data.get("data"):
-                            c = data['data'][0]
-                            # [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
-                            
+                    for symbol in self.symbols:
+                        inst_id = self.exchange_symbols.get(symbol, self._to_okx_inst_id(symbol))
+                        url = f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar={bar}&limit=1"
+                        try:
+                            resp = await client.get(url, timeout=5)
+                            data = resp.json()
+                            if data.get("code") != "0" or not data.get("data"):
+                                continue
+                            c = data["data"][0]
                             candle_map = {
-                                'ts': c[0], 
-                                'o': c[1], 
-                                'h': c[2], 
-                                'l': c[3], 
-                                'c': c[4], 
-                                'vol': c[5],
-                                'confirm': c[8] 
+                                "ts": c[0],
+                                "o": c[1],
+                                "h": c[2],
+                                "l": c[3],
+                                "c": c[4],
+                                "vol": c[5],
+                                "confirm": c[8],
                             }
-                            
-                            # 1. Calculate
-                            indicators = self.calculate_indicators(candle_map)
-                            
-                            # 2. Redis
-                            await self.save_to_redis(indicators)
-                            
-                            # 3. DB (Upsert latest)
-                            await self.save_to_db(candle_map, indicators)
-                            
-                            # 4. Check Pending Orders (Simulated Matching Engine)
-                            try:
-                                from app.services.paper_trading import PaperTradingService
-                                user_session = SessionLocalUser()
-                                try:
-                                    pt_service = PaperTradingService(user_session)
-                                    current_prices = {SYMBOL: float(candle_map['c'])}
-                                    triggered = pt_service.check_and_trigger_pending_orders(current_prices)
-                                    if triggered > 0:
-                                        logger.info(f"⚡ Simulated Match Engine: Triggered {triggered} pending orders at price {candle_map['c']}")
-                                finally:
-                                    user_session.close()
-                            except Exception as e:
-                                logger.error(f"Failed to check pending orders: {e}")
-                            
-                            if candle_map['confirm'] == "1":
-                                logger.info(f"💾 Candle Closed: {pd.to_datetime(int(candle_map['ts']), unit='ms')}")
-                            else:
-                                # logger.debug(f"Tick: {candle_map['c']}")
-                                pass
-                                
-                    except Exception as req_err:
-                        logger.error(f"Request failed: {req_err}")
+                            indicators = self.calculate_indicators(symbol, candle_map)
+                            await self.save_to_redis(symbol, indicators)
+                            await self.save_to_db(symbol, candle_map, indicators)
+                            current_prices[symbol] = float(candle_map["c"])
+                            if candle_map["confirm"] == "1":
+                                logger.info(f"💾 Candle Closed: {symbol} {pd.to_datetime(int(candle_map['ts']), unit='ms')}")
+                        except Exception as req_err:
+                            logger.error(f"Request failed for {symbol}: {req_err}")
+                if current_prices:
+                    try:
+                        from app.services.paper_trading import PaperTradingService
+                        user_session = SessionLocalUser()
+                        try:
+                            pt_service = PaperTradingService(user_session)
+                            triggered = pt_service.check_and_trigger_pending_orders(current_prices)
+                            if triggered > 0:
+                                logger.info(f"⚡ Simulated Match Engine: Triggered {triggered} pending orders")
+                        finally:
+                            user_session.close()
+                    except Exception as e:
+                        logger.error(f"Failed to check pending orders: {e}")
                 
-                await asyncio.sleep(3) # Poll every 3 seconds
+                await asyncio.sleep(3)
                 
             except Exception as e:
                 logger.error(f"Stream error: {e}. Retry in 5s...")

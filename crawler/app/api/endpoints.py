@@ -6,7 +6,7 @@ from app.services.macro_crawler import MacroCrawlerService
 from app.services.onchain_crawler import OnChainCrawlerService
 from app.services.market_crawler import MarketCrawler
 from app.services.news_crawler import NewsCrawler
-from shared.core.symbols import get_schedule_symbols_from_env
+from shared.core.symbols import get_default_symbol, get_schedule_symbols_from_env, get_schedule_timeframes_from_env
 
 router = APIRouter()
 
@@ -16,8 +16,8 @@ def get_active_symbols() -> list[str]:
 
 
 class MarketBackfillRequest(BaseModel):
-    symbol: str = "BTC/USDT"
-    timeframe: str = "1m"
+    symbol: str = get_default_symbol()
+    timeframe: str = get_schedule_timeframes_from_env()[0]
     hours: int = 24
 
 @router.post("/trigger/macro")
@@ -113,7 +113,7 @@ async def trigger_sync_techflow(background_tasks: BackgroundTasks):
 @router.post("/sync/market")
 async def sync_market(req: dict | None = None):
     symbols = (req or {}).get("symbols") or get_active_symbols()
-    timeframes = (req or {}).get("timeframes") or ["1m"]
+    timeframes = (req or {}).get("timeframes") or get_schedule_timeframes_from_env()
     crawler = MarketCrawler()
     try:
         await crawler.sync_market_data(symbols, timeframes)

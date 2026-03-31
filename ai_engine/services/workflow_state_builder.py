@@ -7,6 +7,7 @@ from services.market_intel import market_intel_service
 from services.safety_guard import safety_guard_service
 from services.system_config import system_config_service
 from model.policies import DataRoutingPolicy, OrchestrationConfig
+from shared.core.symbols import get_schedule_timeframes_from_env
 
 
 @dataclass
@@ -17,6 +18,9 @@ class WorkflowStateBuildResult:
 
 
 class WorkflowStateBuilder:
+    def _resolve_primary_interval(self) -> str:
+        return get_schedule_timeframes_from_env()[0]
+
     def _load_data_routing_policy(self) -> Dict[str, Any]:
         raw = system_config_service.get_json("DATA_ROUTING_POLICY")
         if isinstance(raw, dict):
@@ -40,8 +44,9 @@ class WorkflowStateBuilder:
         desired_notional = max(100.0, account_balance * 0.01)
         unresolved_todos = []
         data_quality = "ok"
+        primary_interval = self._resolve_primary_interval()
         ticker_depth = await market_intel_service.fetch_ticker_depth(symbol=symbol, levels=10)
-        kline_1m = await market_intel_service.fetch_klines(symbol=symbol, interval="1m", limit=180)
+        kline_1m = await market_intel_service.fetch_klines(symbol=symbol, interval=primary_interval, limit=180)
 
         if float(market_snapshot.get("price", 0.0) or 0.0) <= 0.0:
             ticker_price = float(ticker_depth.get("price", 0.0) or 0.0)
@@ -63,14 +68,14 @@ class WorkflowStateBuilder:
 
         market_data = MarketData(
             symbol=symbol,
-            timeframe="1m",
+            timeframe=primary_interval,
             price=market_snapshot["price"],
             volume=market_snapshot["volume"],
             indicators=market_snapshot["indicators"],
         )
 
         if not kline_1m:
-            unresolved_todos.append(f"{symbol} 缺少可用的 1m K线数据，使用基础模式运行")
+            unresolved_todos.append(f"{symbol} 缺少可用的 {primary_interval} K线数据，使用基础模式运行")
             if data_quality == "ok":
                 data_quality = "degraded_no_kline"
         microstructure = market_intel_service.build_microstructure_snapshot(ticker_depth, desired_notional)
