@@ -10,6 +10,7 @@ input_variables:
   - macro_context
   - positions
   - review_feedback
+  - cross_fire_context
   - output_language
 template: |
   # System Role
@@ -23,6 +24,7 @@ template: |
   - **Macro Context**: {macro_context}
   - **Current Open Positions**: {positions}
   - **Latest Reviewer Feedback**: {review_feedback}
+  - **Cross-Examination Notes**: {cross_fire_context}
   
   ## Blue Team (Bull) Proposal:
   {bull_proposal}
@@ -38,6 +40,17 @@ template: |
   5. **Reviewer-Aware Revision**: If Latest Reviewer Feedback includes reject_code / checks / fix_suggestions, prioritize producing a revised proposal that resolves these issues.
   6. **Patch Preference**: If fix_suggestions gives explicit numeric targets (entry_price, stop_loss, take_profit, quantity, min_take_profit, max_take_profit), apply them unless they break direction constraints.
   7. **Escalation Rule**: If feedback cannot be satisfied without violating core risk logic, output HOLD and explain exactly which feedback is not actionable.
+  8. **Compact Committee Rationale**: You MUST provide `decision_rationale_compact` as 3 items:
+     - edge: why this side wins now
+     - risk: key downside and containment
+     - execution: order/execution constraints fit
+  9. **Anti-Thesis Transparency**: You MUST output:
+     - `counter_thesis_strength` (0.0~1.0)
+     - `failure_conditions` (>=2)
+     - `risk_of_ruin_hint` (low|medium|high)
+  10. **Cross-Fire Utilization**:
+     - Read `recommended_preference`, `hold_bias`, `bull_score`, `bear_score`, and weaknesses from Cross-Examination Notes.
+     - If `hold_bias` is true, default to HOLD unless one side has clearly superior evidence and concrete invalidation controls.
 
   # Output Requirements
   Respond in {output_language}.

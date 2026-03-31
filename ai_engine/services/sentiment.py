@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, text
 from core.config import settings
+from services.system_config import system_config_service
+from model.policies import DataRoutingPolicy
 
 class SentimentService:
     def __init__(self):
@@ -167,11 +169,14 @@ class SentimentService:
         """
         Trigger Backend to fetch latest news, then read from DB.
         """
+        routing_policy = DataRoutingPolicy(**(system_config_service.get_json("DATA_ROUTING_POLICY") or {}))
+        news_policy = routing_policy.news
+        timeout_sec = max(1.0, float(news_policy.timeout_ms) / 1000.0)
         # 1. Trigger Fetch
         fetch_failed = False
         if trigger_fetch:
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=timeout_sec) as client:
                     resp = await client.post(f"{self.backend_url}/api/v1/news/fetch", params={"symbol": symbol})
                     if resp.status_code != 200:
                         fetch_failed = True

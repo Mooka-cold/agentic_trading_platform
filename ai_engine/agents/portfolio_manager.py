@@ -69,6 +69,39 @@ class PortfolioManager(BaseAgent):
             return proposal, None
         return proposal, "; ".join(changes)
 
+    def _apply_onchain_gate_position_cap(
+        self,
+        proposal: StrategyProposal,
+        constraints: dict,
+        market_price: float,
+        account_balance: float,
+    ) -> tuple[StrategyProposal, str | None]:
+        action = str(proposal.action or "").upper()
+        if action not in ["LONG", "SHORT", "BUY"]:
+            return proposal, None
+        onchain_gate = str(constraints.get("onchain_trade_gate", "normal") or "normal")
+        if onchain_gate not in {"risk_reduced", "review_only"}:
+            return proposal, None
+        gate_policy = constraints.get("gate_policy", {})
+        policy = gate_policy.get(onchain_gate, {})
+        qty_mult = float(policy.get("qty_mult", 0.5 if onchain_gate == "risk_reduced" else 0.25))
+        hard_notional_pct = 0.006 if onchain_gate == "risk_reduced" else 0.003
+        price = float(market_price or 0.0)
+        balance = float(account_balance or 0.0)
+        if proposal.quantity is None or proposal.quantity <= 0 or price <= 0 or balance <= 0:
+            return proposal, None
+        original_qty = float(proposal.quantity)
+        qty_after_mult = max(0.0, original_qty * qty_mult)
+        hard_qty_cap = (balance * hard_notional_pct) / price
+        final_qty = max(0.0, min(qty_after_mult, hard_qty_cap))
+        if final_qty >= original_qty:
+            return proposal, None
+        proposal.quantity = final_qty
+        constraints["onchain_gate_pre_applied"] = True
+        constraints["onchain_gate_pre_applied_qty_mult"] = qty_mult
+        constraints["onchain_gate_hard_notional_pct"] = hard_notional_pct
+        return proposal, f"onchain_gate={onchain_gate}; quantity {original_qty:.6f} -> {final_qty:.6f}; qty_mult={qty_mult:.3f}; hard_notional_pct={hard_notional_pct:.4f}"
+
     async def run(self, state: AgentState) -> dict:
         session_id = state.session_id
         
@@ -91,6 +124,7 @@ class PortfolioManager(BaseAgent):
         positions_str = json.dumps([p for p in state.positions if p['symbol'] == state.market_data.symbol]) if state.positions else "None"
         review_feedback = state.review_feedback or {}
         review_feedback_str = json.dumps(review_feedback, ensure_ascii=False)
+        cross_fire_context_str = json.dumps(state.debate_notes or {}, ensure_ascii=False)
 
         try:
             bull_payload = bull.model_dump_json() if isinstance(bull, StrategyProposal) else json.dumps(bull, ensure_ascii=False)
@@ -103,12 +137,33 @@ class PortfolioManager(BaseAgent):
                     "analyst_bias": analyst_bias,
                     "macro_context": macro_context,
                     "positions": positions_str,
-                    "review_feedback": review_feedback_str
+                    "review_feedback": review_feedback_str,
+                    "cross_fire_context": cross_fire_context_str
                 },
                 output_model=StrategyProposal
             )
 
             proposal = self._normalize_proposal(result)
+            cross_fire_context = state.debate_notes or {}
+            constraints = state.execution_constraints or {}
+            ce_policy = constraints.get("cross_examiner_policy", {}) if isinstance(constraints, dict) else {}
+            enforce_hold_bias = bool(ce_policy.get("enforce_hold_bias", False))
+            if enforce_hold_bias and bool(cross_fire_context.get("hold_bias", False)):
+                if str(proposal.action or "HOLD").upper() in ["LONG", "SHORT", "BUY"]:
+                    original_action = proposal.action
+                    proposal.action = "HOLD"
+                    proposal.order_type = "MARKET"
+                    proposal.trigger_condition = None
+                    proposal.entry_price = None
+                    proposal.quantity = None
+                    proposal.stop_loss = None
+                    proposal.take_profit = None
+                    proposal.confidence = min(float(proposal.confidence or 0.0), 0.55)
+                    proposal.reasoning = (
+                        f"[PM ARBITRATION] Cross-exam hold_bias enforced. "
+                        f"Original action {original_action} replaced with HOLD due to high conflict and weak score gap."
+                    )
+                    await self.think("Cross-exam hold_bias enforcement triggered: converted opening action to HOLD.", session_id)
             proposal, patch_desc = self._apply_review_feedback(proposal, state.review_feedback)
             if patch_desc:
                 await self.think(
@@ -120,7 +175,17 @@ class PortfolioManager(BaseAgent):
                     f"Reviewer feedback received but no auto-applicable patch: {json.dumps(state.review_feedback.get('fix_suggestions') or {}, ensure_ascii=False)}",
                     session_id
                 )
-            constraints = state.execution_constraints or {}
+            proposal, onchain_patch_desc = self._apply_onchain_gate_position_cap(
+                proposal=proposal,
+                constraints=constraints,
+                market_price=float(state.market_data.price or 0.0),
+                account_balance=float(state.account_balance or 0.0),
+            )
+            if onchain_patch_desc:
+                await self.think(
+                    f"Applied onchain gate position cap: {onchain_patch_desc}",
+                    session_id
+                )
             if bool(constraints.get("deleveraging_required")):
                 symbol_positions = [p for p in (state.positions or []) if p.get("symbol") == state.market_data.symbol]
                 long_size = sum(float(p.get("size", p.get("quantity", 0.0)) or 0.0) for p in symbol_positions if str(p.get("side", "")).upper() in ["LONG", "BUY"])
@@ -161,7 +226,7 @@ class PortfolioManager(BaseAgent):
                         proposal.reasoning = "DELEVERAGE_OVERRIDE: leverage high but no matching position to reduce."
                     await self.think("Deleveraging mode active: blocked risk-increasing action and converted to risk reduction.", session_id)
             await self.think(f"Arbitration Complete. Chosen Action: {proposal.action}", session_id)
-            return {"strategy_proposal": proposal}
+            return {"strategy_proposal": proposal, "execution_constraints": constraints}
 
         except Exception as e:
             await self.think(f"Failed to arbitrate: {e}", session_id)

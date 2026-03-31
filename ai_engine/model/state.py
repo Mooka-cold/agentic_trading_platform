@@ -15,6 +15,9 @@ class AnalystOutput(BaseModel):
     summary: str = Field(description="Market summary (max 50 words)")
     trading_bias: str = Field(description="BULLISH | BEARISH | NEUTRAL")
     key_risk: str = Field(description="Current biggest risk factor")
+    evidence_quality: str = Field(default="medium", description="high | medium | low")
+    counter_thesis_strength: float = Field(default=0.5, description="How strong the opposite thesis is, 0.0-1.0")
+    failure_conditions: List[str] = Field(default_factory=list, description="Conditions that would invalidate current bias")
     reasoning: str = Field(description="Step-by-step analysis chain")
 
 class StrategyProposal(BaseModel):
@@ -29,6 +32,10 @@ class StrategyProposal(BaseModel):
     confidence: float
     self_check: Optional[Dict[str, Any]] = None # New field for risk self-check
     assumptions: List[str] = Field(default_factory=list)
+    decision_rationale_compact: List[str] = Field(default_factory=list)
+    risk_of_ruin_hint: Optional[str] = Field(default="medium", description="low | medium | high")
+    counter_thesis_strength: Optional[float] = Field(default=0.5, description="0.0-1.0")
+    failure_conditions: List[str] = Field(default_factory=list)
 
 class RiskVerdict(BaseModel):
     approved: bool
@@ -150,6 +157,7 @@ class AgentState(BaseModel):
     strategy_proposal: Optional[StrategyProposal] = None # The final chosen proposal by PM
     risk_verdict: Optional[RiskVerdict] = None
     review_feedback: Optional[Dict[str, Any]] = None
+    debate_notes: Optional[Dict[str, Any]] = None
     analyst_feedback: Optional[str] = None # Strategist's question to Analyst
     execution_result: Optional[Dict[str, Any]] = None  # <--- New Field for Execution Result
     strategy_revision_round: int = 0

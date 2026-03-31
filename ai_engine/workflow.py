@@ -9,6 +9,7 @@ from services.workflow_session_api import workflow_session_api
 from services.workflow_runtime_api import workflow_runtime_api
 from services.workflow_state_builder import workflow_state_builder
 from services.workflow_loop_policy import workflow_loop_policy
+from services.system_config import system_config_service
 
 from langgraph_workflow import create_trading_workflow
 
@@ -38,8 +39,6 @@ class WorkflowEngine:
         self.processing_lock = asyncio.Lock()
         
         self.reload_agents()
-        # Initialize LangGraph Workflow
-        self.graph_app = create_trading_workflow()
 
     def reload_agents(self):
         print("🔄 Reloading Agents with latest config...")
@@ -55,6 +54,8 @@ class WorkflowEngine:
         self.portfolio_manager = PortfolioManager()
         self.reviewer = Reviewer()
         self.reflector = Reflector(self.redis_client) # Pass redis_client here
+        orchestration_config = system_config_service.get_json("WORKFLOW_ORCHESTRATION_CONFIG")
+        self.graph_app = create_trading_workflow(orchestration_config=orchestration_config)
         print("✅ Agents reloaded.")
 
     async def start_loop(self, symbol: str, session_id: str):

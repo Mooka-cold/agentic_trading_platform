@@ -17,7 +17,11 @@ template: |
 
   # PROCESS DISCIPLINE
   The "reasoning" field must be structured with explicit sections:
-  GOAL, KNOWNS, SUB_AGENTS, SYNTHESIS, CONCLUSION, SELF_CHECK.
+  GOAL, KNOWNS, SUB_AGENTS, COUNTER_EVIDENCE, SYNTHESIS, CONCLUSION, SELF_CHECK.
+  You MUST quantify opposite-view pressure:
+  - `counter_thesis_strength`: 0.0 to 1.0
+  - `failure_conditions`: at least 2 concrete invalidation conditions
+  - `evidence_quality`: high | medium | low
   Confidence Anchors (MANDATORY):
   - 0.80~1.00: Trend and multi-timeframe indicators align, low contradiction.
   - 0.60~0.79: Bias clear, but one major indicator is inconclusive.
@@ -50,5 +54,8 @@ template: |
       "sentiment_score": float (-1.0 to 1.0),
       "confidence": float (0.0 - 1.0),
       "key_risk": "Main risk factor (e.g. Low Volume, High Volatility)",
+      "evidence_quality": "high" | "medium" | "low",
+      "counter_thesis_strength": float (0.0 - 1.0),
+      "failure_conditions": ["Condition 1", "Condition 2"],
       "reasoning": "Data-driven explanation synthesizing sub-agent inputs"
   }}

@@ -4,9 +4,11 @@ from html import unescape
 from time import mktime
 import hashlib
 import re
+import json
 
 import feedparser
 import httpx
+from sqlalchemy import text
 
 from shared.core.config import settings
 from shared.db.session import SessionLocalUser
@@ -28,6 +30,147 @@ TECHFLOW_SOURCES = [
 
 
 class NewsCrawler:
+    def _ensure_onchain_event_table(self, db):
+        db.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS onchain_wallet_events (
+                    event_uid TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    source_news_url TEXT,
+                    title TEXT,
+                    summary TEXT,
+                    published_at TIMESTAMP WITHOUT TIME ZONE,
+                    chain TEXT,
+                    tx_hash TEXT,
+                    wallet_address TEXT,
+                    counterparty_address TEXT,
+                    direction TEXT,
+                    asset_symbol TEXT,
+                    amount DOUBLE PRECISION,
+                    amount_usd DOUBLE PRECISION,
+                    raw_payload TEXT,
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+                )
+                """
+            )
+        )
+        db.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_onchain_wallet_events_published_at ON onchain_wallet_events (published_at)")
+        )
+        db.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_onchain_wallet_events_source ON onchain_wallet_events (source)")
+        )
+
+    def _detect_chain(self, text_value: str) -> str | None:
+        t = text_value.lower()
+        if "tron" in t or "trc20" in t:
+            return "TRON"
+        if "solana" in t or "sol " in t:
+            return "SOL"
+        if "bitcoin" in t or "btc网络" in t:
+            return "BTC"
+        if "ethereum" in t or "erc20" in t or "以太" in t:
+            return "ETH"
+        return None
+
+    def _detect_direction(self, text_value: str) -> str:
+        t = text_value.lower()
+        if any(k in t for k in ["转入交易所", "流入交易所", "deposit", "to exchange", "inflow to exchange"]):
+            return "to_exchange"
+        if any(k in t for k in ["提出交易所", "流出交易所", "withdraw", "from exchange", "outflow from exchange"]):
+            return "from_exchange"
+        return "transfer"
+
+    def _extract_amount_usd(self, text_value: str) -> float | None:
+        cn = re.search(r"(\d+(?:\.\d+)?)\s*(亿|万)?\s*美元", text_value)
+        if cn:
+            base = float(cn.group(1))
+            unit = cn.group(2) or ""
+            if unit == "亿":
+                return base * 100000000.0
+            if unit == "万":
+                return base * 10000.0
+            return base
+        en = re.search(r"\$?\s*(\d+(?:\.\d+)?)\s*(billion|million|thousand|bn|m|k)?\s*(usd|usdt|usdc|\$)?", text_value, re.IGNORECASE)
+        if en:
+            base = float(en.group(1))
+            unit = (en.group(2) or "").lower()
+            cur = (en.group(3) or "").lower()
+            if unit in {"billion", "bn"}:
+                base *= 1000000000.0
+            elif unit in {"million", "m"}:
+                base *= 1000000.0
+            elif unit in {"thousand", "k"}:
+                base *= 1000.0
+            if cur in {"usd", "usdt", "usdc", "$"} or unit in {"billion", "million", "thousand", "bn", "m", "k"}:
+                return base
+        return None
+
+    def _extract_asset_symbol(self, text_value: str) -> str | None:
+        m = re.search(r"\b(BTC|ETH|SOL|BNB|XRP|DOGE|TRX|USDT|USDC|DAI)\b", text_value, re.IGNORECASE)
+        if not m:
+            return None
+        return m.group(1).upper()
+
+    def _extract_onchain_event_candidates(self, source_name: str, item: dict) -> list[dict]:
+        if source_name != "TechFlow-OnchainWhale":
+            return []
+        text_value = f"{item.get('title','')} {item.get('summary','')}"
+        tx_hashes = re.findall(r"\b0x[a-fA-F0-9]{64}\b", text_value)
+        wallets = re.findall(r"\b0x[a-fA-F0-9]{40}\b|\bT[1-9A-HJ-NP-Za-km-z]{33}\b|\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b", text_value)
+        amount_usd = self._extract_amount_usd(text_value)
+        asset_symbol = self._extract_asset_symbol(text_value)
+        chain = self._detect_chain(text_value)
+        direction = self._detect_direction(text_value)
+        primary_wallet = wallets[0] if wallets else None
+        counterparty_wallet = wallets[1] if len(wallets) > 1 else None
+        tx_hash = tx_hashes[0] if tx_hashes else None
+        minute_bucket = item["published_at"].strftime("%Y-%m-%d %H:%M")
+        signature = f"{source_name}|{item.get('title','')}|{tx_hash or ''}|{primary_wallet or ''}|{amount_usd or ''}|{minute_bucket}"
+        event_uid = hashlib.sha1(signature.encode("utf-8")).hexdigest()
+        return [
+            {
+                "event_uid": event_uid,
+                "source": source_name,
+                "source_news_url": item.get("url"),
+                "title": item.get("title"),
+                "summary": item.get("summary"),
+                "published_at": item.get("published_at"),
+                "chain": chain,
+                "tx_hash": tx_hash,
+                "wallet_address": primary_wallet,
+                "counterparty_address": counterparty_wallet,
+                "direction": direction,
+                "asset_symbol": asset_symbol,
+                "amount": None,
+                "amount_usd": amount_usd,
+                "raw_payload": json.dumps(item, ensure_ascii=False, default=str),
+            }
+        ]
+
+    def _upsert_onchain_events(self, db, events: list[dict]) -> int:
+        if not events:
+            return 0
+        inserted = 0
+        sql = text(
+            """
+            INSERT INTO onchain_wallet_events
+            (event_uid, source, source_news_url, title, summary, published_at, chain, tx_hash, wallet_address, counterparty_address, direction, asset_symbol, amount, amount_usd, raw_payload)
+            VALUES
+            (:event_uid, :source, :source_news_url, :title, :summary, :published_at, :chain, :tx_hash, :wallet_address, :counterparty_address, :direction, :asset_symbol, :amount, :amount_usd, :raw_payload)
+            ON CONFLICT (event_uid) DO NOTHING
+            """
+        )
+        for event in events:
+            result = db.execute(sql, event)
+            try:
+                if int(result.rowcount or 0) > 0:
+                    inserted += 1
+            except Exception:
+                pass
+        return inserted
+
     def _run_rss_sync_sync(self, name: str, url: str):
         db = SessionLocalUser()
         try:
@@ -231,8 +374,10 @@ class NewsCrawler:
 
     async def fetch_techflow_news(self):
         total = 0
+        onchain_event_total = 0
         db = SessionLocalUser()
         try:
+            self._ensure_onchain_event_table(db)
             for source_name, page_url in TECHFLOW_SOURCES:
                 html_text = await self._fetch_text_with_retry(page_url, retries=3, timeout_seconds=10.0)
                 parsed_items = self._parse_techflow_items(source_name, self._normalize_techflow_text(html_text))
@@ -243,6 +388,7 @@ class NewsCrawler:
                 
                 existing_keys = {f"{source_name}|{clean_title(row[0])}|{row[1].strftime('%Y-%m-%d %H:%M')}" for row in existing_rows}
                 for item in parsed_items:
+                    onchain_event_total += self._upsert_onchain_events(db, self._extract_onchain_event_candidates(source_name, item))
                     key = f"{source_name}|{clean_title(item['title'])}|{item['published_at'].strftime('%Y-%m-%d %H:%M')}"
                     if key in existing_keys:
                         continue
@@ -258,6 +404,8 @@ class NewsCrawler:
                     )
                     total += 1
             if total > 0:
+                db.commit()
+            elif onchain_event_total > 0:
                 db.commit()
         except Exception as exc:
             print(f"TechFlow sync failed: {exc}")

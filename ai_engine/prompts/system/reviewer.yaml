@@ -62,6 +62,15 @@ template: |
      - Does the Action (Buy/Sell) contradict the Market Context?
      - Example: If Analyst is BEARISH and Sentiment is FEAR, a LONG strategy must have a very strong reason (e.g., Mean Reversion). If not, REJECT.
      - **Correlation Check**: Do NOT assume BTC always correlates with US Equities. If Macro suggests "Risk Off" but BTC On-Chain signals "Safe Haven" inflow, a decoupling trade is valid. Only reject if BOTH Traditional and Crypto-Native signals are bearish.
+  
+  4. **Proposal Completeness (Committee Discipline)**:
+     - For opening operations (BUY/SHORT/LONG), inspect:
+       - `failure_conditions` length >= 2
+       - `counter_thesis_strength` exists and in [0.0, 1.0]
+       - `decision_rationale_compact` has 3 concise items
+       - `risk_of_ruin_hint` is one of low|medium|high
+     - If missing, do not auto-reject by default; mark checks FAIL and include actionable fix_suggestions.
+     - If confidence >= 0.80 but anti-thesis fields are missing, increase risk_score by at least +10.
      
   # User Risk Config
   {user_risk_config}

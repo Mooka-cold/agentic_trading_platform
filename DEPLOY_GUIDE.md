@@ -86,20 +86,11 @@ cd ~/ai_trading
 *   **Frontend**: 跑在本地。
 
 ### 5.1 本地前端配置
-修改本地前端的 `.env.local` 文件：
+本地前端通过 Vite 代理访问远程 backend，启动时设置 `BACKEND_URL`：
 
-```bash
-# 指向远程服务器的 Backend API
-NEXT_PUBLIC_API_URL=http://<YOUR_SERVER_IP>:3201
-
-# Next.js 服务端代理 /api/ai_engine/* 使用
-AI_ENGINE_URL=http://<YOUR_SERVER_IP>:3202
-```
-
-启动本地前端：
 ```bash
 cd frontend
-npm run dev
+BACKEND_URL=http://<YOUR_SERVER_IP>:3201 npm run dev
 ```
 
 现在，打开本地浏览器 `http://localhost:3200`，你操作的每一次点击，都会请求远程服务器上的 API。

@@ -29,9 +29,9 @@
 
 ### 2.3 frontend
 
-- 基于 Next.js 16 App Router
+- 基于 Vite + React + TypeScript
 - 展示实时状态、会话详情、策略配置与系统设置
-- 通过 API Route 代理对接 ai_engine / backend
+- 通过 Vite `/api` 代理对接 backend（由 backend 统一编排上游服务）
 
 ### 2.4 crawler / scheduler
 
@@ -77,24 +77,19 @@
 
 ### 5.1 版本基线
 
-- Next.js 16+
+- Vite 5+
+- React 18+
 - Node.js 20.9+
-- ESLint 9（flat config）
+- ESLint 9
 - TypeScript 5+
 
 ### 5.2 构建基线
 
-- 当前项目使用 `--webpack` 显式构建模式
-- API Route 使用 Next 16 约定签名
-- Client Provider 与 Server Layout 分离，避免构建期 localStorage 问题
+- 使用 Vite dev server（3200）进行本地开发
+- 通过 `vite.config.ts` 将 `/api` 代理到 backend
+- 发布前执行 `npm run lint` 与 `npm run build`
 
 ## 6. 依赖安全策略
-
-前端通过 `package.json -> overrides` 锁定高风险传递依赖最低安全版本：
-
-- h3: ^1.15.10
-- hono: ^4.12.7
-- socket.io-parser: ^4.2.6
 
 依赖升级后必须执行：
 

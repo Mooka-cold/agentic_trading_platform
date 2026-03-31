@@ -202,7 +202,7 @@ services:
     networks:
       - ai_trading_net
 
-  # Frontend (Next.js)
+  # Frontend (Vite/React)
   frontend:
     build:
       context: ./frontend
@@ -212,16 +212,8 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - /app/.next
     environment:
-      # Browser-side access (User's browser -> Backend Public URL)
-      # In local dev: http://localhost:3201
-      # In cloud: http://<PUBLIC_IP>:3201
-      - NEXT_PUBLIC_API_URL=http://localhost:3201
-      
-      # Server-side access (Next.js Container -> AI Engine Container)
-      # Always use internal Docker DNS name
-      - AI_ENGINE_URL=http://ai-engine:8000
+      - BACKEND_URL=http://backend:8000
     networks:
       - ai_trading_net
 

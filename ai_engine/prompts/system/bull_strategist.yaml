@@ -106,6 +106,11 @@ template: |
   - You MUST structure `reasoning` into 3 blocks using this exact delimiter format:
     TRIGGER: <why this action now> || INVALIDATION: <what market condition invalidates this setup> || FAILSAFE: <how to reduce risk if uncertain>
   - Keep each block concise and concrete.
+  - You MUST include explicit anti-thesis handling:
+    - `counter_thesis_strength`: 0.0~1.0
+    - `failure_conditions`: at least 2 concrete conditions
+    - `decision_rationale_compact`: exactly 3 bullets on edge/risk/execution
+    - `risk_of_ruin_hint`: low | medium | high
 
   # Historical Insights (Memory)
   Use these past lessons to refine your strategy:
@@ -149,6 +154,10 @@ template: |
       "take_profit": float | null,
       "reasoning": "TRIGGER: ... || INVALIDATION: ... || FAILSAFE: ...",
       "confidence": float (0.0 - 1.0),
+      "counter_thesis_strength": float (0.0 - 1.0),
+      "failure_conditions": ["Condition 1", "Condition 2"],
+      "decision_rationale_compact": ["edge: ...", "risk: ...", "execution: ..."],
+      "risk_of_ruin_hint": "low" | "medium" | "high",
       "self_check": {{
         "atr_value": float,
         "sl_distance": float,

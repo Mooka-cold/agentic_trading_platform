@@ -5,8 +5,10 @@ from typing import Optional, Dict, Any
 from services.llm_service import LLMService
 from services.redis_stream import redis_stream
 from services.watcher import WatcherService
+from services.system_config import system_config_service
 from workflow import WorkflowEngine
 from core.prompt_loader import registry
+from model.policies import OrchestrationConfig, DataRoutingPolicy
 from sse_starlette.sse import EventSourceResponse
 import asyncio
 import time
@@ -197,6 +199,19 @@ async def workflow_status_endpoint():
         "is_running": workflow_engine.is_running,
         "symbol": workflow_engine.latest_config.get("symbol"),
         "session_id": workflow_engine.latest_config.get("session_id")
+    }
+
+
+@app.get("/workflow/policies/active")
+async def workflow_policies_active():
+    orchestration_raw = system_config_service.get_json("WORKFLOW_ORCHESTRATION_CONFIG") or {}
+    routing_raw = system_config_service.get_json("DATA_ROUTING_POLICY") or {}
+    orchestration = OrchestrationConfig(**orchestration_raw).model_dump()
+    routing_policy = DataRoutingPolicy(**routing_raw).model_dump()
+    return {
+        "orchestration": orchestration,
+        "routing_policy": routing_policy,
+        "available_analysis_nodes": OrchestrationConfig().enabled_analysis_nodes,
     }
 
 @app.post("/workflow/stop")

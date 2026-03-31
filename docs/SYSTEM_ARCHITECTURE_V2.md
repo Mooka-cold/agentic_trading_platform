@@ -19,9 +19,9 @@ V2 架构的目标是让系统在复杂业务下保持：
 
 ### 3.1 交互层
 
-- Frontend（Next.js 16）
+- Frontend（Vite + React）
   - Dashboard / History / Strategy / Settings
-  - API Route 代理与展示编排
+  - 通过 `/api` 代理访问 backend
 
 ### 3.2 应用层
 
@@ -74,18 +74,11 @@ V2 架构的目标是让系统在复杂业务下保持：
 
 ### 6.1 运行时基线
 
-- Next.js 16+
+- Vite 5+
+- React 18+
 - Node.js 20.9+
 
-### 6.2 前端依赖安全覆盖
-
-通过 `frontend/package.json -> overrides` 固定高风险传递依赖最低安全版本：
-
-- h3: ^1.15.10
-- hono: ^4.12.7
-- socket.io-parser: ^4.2.6
-
-### 6.3 发布校验 SOP
+### 6.2 发布校验 SOP
 
 ```bash
 cd frontend
@@ -95,7 +88,7 @@ npm run lint
 npm run build
 ```
 
-### 6.4 回滚 SOP
+### 6.3 回滚 SOP
 
 ```bash
 cd frontend

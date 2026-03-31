@@ -140,10 +140,24 @@ class Reviewer(BaseAgent):
         is_opening = proposal.action.upper() in ["LONG", "SHORT", "BUY"]
         gate_mode = "normal"
         gate_reason = None
+        gate_sources = []
+        selected_gate_source = "sentiment"
         if state.sentiment_report:
-            gate_mode = str(getattr(state.sentiment_report, "trade_gate", "normal") or "normal")
-            gate_reason = getattr(state.sentiment_report, "trigger_reason", None)
+            sentiment_gate = str(getattr(state.sentiment_report, "trade_gate", "normal") or "normal")
+            sentiment_reason = getattr(state.sentiment_report, "trigger_reason", None)
+            gate_mode = sentiment_gate
+            gate_reason = sentiment_reason
+            gate_sources.append({"source": "sentiment", "gate": sentiment_gate, "reason": sentiment_reason})
         execution_constraints = state.execution_constraints or {}
+        onchain_gate = str(execution_constraints.get("onchain_trade_gate", "normal") or "normal")
+        onchain_gate_reason = execution_constraints.get("onchain_trade_gate_reason")
+        gate_sources.append({"source": "onchain", "gate": onchain_gate, "reason": onchain_gate_reason})
+        gate_rank = {"normal": 0, "risk_reduced": 1, "review_only": 2, "observe_only": 2}
+        if gate_rank.get(onchain_gate, 0) > gate_rank.get(gate_mode, 0):
+            gate_mode = onchain_gate
+            gate_reason = onchain_gate_reason or gate_reason
+            selected_gate_source = "onchain"
+        onchain_gate_pre_applied = bool(execution_constraints.get("onchain_gate_pre_applied", False))
         data_quality = str(execution_constraints.get("data_quality", "ok") or "ok")
         data_quality_reasons = execution_constraints.get("data_quality_reasons", [])
         if is_opening and data_quality == "blocked_no_price":
@@ -202,13 +216,16 @@ class Reviewer(BaseAgent):
                 artifact={
                     "gate_mode": gate_mode,
                     "trigger_reason": gate_reason,
+                    "gate_sources": gate_sources,
+                    "selected_gate_source": selected_gate_source,
+                    "onchain_gate_pre_applied": onchain_gate_pre_applied,
                     "urgent_event": bool(getattr(state.sentiment_report, "urgent_event", False)) if state.sentiment_report else False,
                     "sample_count": int(getattr(state.sentiment_report, "sample_count", 0)) if state.sentiment_report else 0,
                     "conflicts": list(getattr(state.sentiment_report, "aggregation_conflicts", [])) if state.sentiment_report else []
                 }
             )
 
-        if is_opening and gate_mode == "review_only":
+        if is_opening and gate_mode == "review_only" and not (selected_gate_source == "onchain" and onchain_gate_pre_applied):
             original_qty = proposal.quantity
             if proposal.quantity is not None:
                 proposal.quantity = max(0.0, proposal.quantity * float(review_only_policy.get("qty_mult", 0.25)))
@@ -269,7 +286,7 @@ class Reviewer(BaseAgent):
                 }
             )
 
-        if is_opening and gate_mode == "risk_reduced":
+        if is_opening and gate_mode == "risk_reduced" and not (selected_gate_source == "onchain" and onchain_gate_pre_applied):
             original_qty = proposal.quantity
             if proposal.quantity is not None:
                 proposal.quantity = max(0.0, proposal.quantity * float(risk_reduced_policy.get("qty_mult", 0.5)))

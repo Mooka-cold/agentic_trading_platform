@@ -10,6 +10,7 @@ from agents.bear_strategist import BearStrategist
 from agents.portfolio_manager import PortfolioManager
 from agents.macro import MacroAgent
 from agents.onchain import OnChainAgent
+from model.policies import OrchestrationConfig
 
 def reduce_agent_state(left: AgentState | None, right: AgentState | None) -> AgentState:
     """合并 AgentState 的并行更新"""
@@ -39,6 +40,8 @@ def reduce_agent_state(left: AgentState | None, right: AgentState | None) -> Age
         left.risk_verdict = right.risk_verdict
     if right.review_feedback:
         left.review_feedback = right.review_feedback
+    if right.debate_notes:
+        left.debate_notes = right.debate_notes
     if right.execution_result:
         left.execution_result = right.execution_result
     if right.market_regime:
@@ -154,6 +157,101 @@ async def bear_strategist_node(state: GraphState):
             
     return {"agent_state": current_state}
 
+async def cross_examiner_node(state: GraphState):
+    """交叉质询节点：对多空提案进行轻量互审，生成PM裁决补充上下文"""
+    current_state = state["agent_state"]
+    bull = current_state.bull_proposal
+    bear = current_state.bear_proposal
+    if not bull or not bear:
+        return {"agent_state": current_state}
+
+    policy = (current_state.execution_constraints or {}).get("cross_examiner_policy", {}) or {}
+    cts_floor = float(policy.get("cts_floor", 0.35) or 0.35)
+    confidence_weight = float(policy.get("confidence_weight", 1.0) or 1.0)
+    weakness_penalty = float(policy.get("weakness_penalty", 0.12) or 0.12)
+    ruin_high_penalty = float(policy.get("ruin_high_penalty", 0.2) or 0.2)
+    score_gap_hold_threshold = float(policy.get("score_gap_hold_threshold", 0.1) or 0.1)
+    high_conflict_hold_bias = bool(policy.get("high_conflict_hold_bias", True))
+
+    def _proposal_weakness(name: str, proposal) -> tuple[list[str], float]:
+        issues = []
+        penalty = 0.0
+        try:
+            cts = float(getattr(proposal, "counter_thesis_strength", 0.5) or 0.5)
+            if cts < cts_floor:
+                issues.append(f"{name}: counter_thesis_strength偏低({cts:.2f})")
+                penalty += weakness_penalty
+        except Exception:
+            issues.append(f"{name}: counter_thesis_strength缺失或不可解析")
+            penalty += weakness_penalty
+        fc = list(getattr(proposal, "failure_conditions", []) or [])
+        if len(fc) < 2:
+            issues.append(f"{name}: failure_conditions不足(<2)")
+            penalty += weakness_penalty
+        dr = list(getattr(proposal, "decision_rationale_compact", []) or [])
+        if len(dr) != 3:
+            issues.append(f"{name}: decision_rationale_compact应为3条")
+            penalty += weakness_penalty
+        roh = str(getattr(proposal, "risk_of_ruin_hint", "medium") or "medium").lower()
+        conf = float(getattr(proposal, "confidence", 0.0) or 0.0)
+        if roh == "high" and conf >= 0.75:
+            issues.append(f"{name}: 高置信但risk_of_ruin_hint=high")
+            penalty += ruin_high_penalty
+        return issues, penalty
+
+    bull_action = str(getattr(bull, "action", "HOLD") or "HOLD").upper()
+    bear_action = str(getattr(bear, "action", "HOLD") or "HOLD").upper()
+    directional_conflict = (
+        bull_action in {"LONG", "BUY"} and bear_action in {"SHORT"}
+    ) or (
+        bull_action in {"HOLD"} and bear_action in {"SHORT"}
+    ) or (
+        bull_action in {"LONG", "BUY"} and bear_action in {"HOLD"}
+    )
+    conflict_level = "high" if directional_conflict else "medium"
+    if bull_action == "HOLD" and bear_action == "HOLD":
+        conflict_level = "low"
+    bull_issues, bull_penalty = _proposal_weakness("bull", bull)
+    bear_issues, bear_penalty = _proposal_weakness("bear", bear)
+    bull_conf = float(getattr(bull, "confidence", 0.0) or 0.0)
+    bear_conf = float(getattr(bear, "confidence", 0.0) or 0.0)
+    bull_score = max(0.0, confidence_weight * bull_conf - bull_penalty)
+    bear_score = max(0.0, confidence_weight * bear_conf - bear_penalty)
+    score_gap = abs(bull_score - bear_score)
+    if bull_score > bear_score:
+        recommended_preference = "bull"
+    elif bear_score > bull_score:
+        recommended_preference = "bear"
+    else:
+        recommended_preference = "hold"
+    hold_bias = bool(
+        (conflict_level == "high" and high_conflict_hold_bias and score_gap <= score_gap_hold_threshold)
+        or (recommended_preference == "hold")
+    )
+    notes = {
+        "conflict_level": conflict_level,
+        "bull_action": bull_action,
+        "bear_action": bear_action,
+        "bull_weaknesses": bull_issues,
+        "bear_weaknesses": bear_issues,
+        "bull_score": round(bull_score, 4),
+        "bear_score": round(bear_score, 4),
+        "score_gap": round(score_gap, 4),
+        "recommended_preference": "hold" if hold_bias else recommended_preference,
+        "hold_bias": hold_bias,
+        "policy": {
+            "cts_floor": cts_floor,
+            "confidence_weight": confidence_weight,
+            "weakness_penalty": weakness_penalty,
+            "ruin_high_penalty": ruin_high_penalty,
+            "score_gap_hold_threshold": score_gap_hold_threshold,
+            "high_conflict_hold_bias": high_conflict_hold_bias,
+        },
+        "suggestion": "prefer_hold_on_high_conflict" if hold_bias else "normal_arbitration",
+    }
+    current_state.debate_notes = notes
+    return {"agent_state": current_state}
+
 async def portfolio_manager_node(state: GraphState):
     """基金经理裁判节点"""
     agent = PortfolioManager()
@@ -232,9 +330,13 @@ def should_continue_negotiation(state: GraphState) -> Literal["revise", "reflect
     if verdict and verdict.approved:
         return "reflect"
     
-    # 3. 如果被拒绝且未超过修订次数，返回策略师
-    # 这里的 2 是最大重试次数
-    if agent_state.strategy_revision_round < 2:
+    constraints = agent_state.execution_constraints or {}
+    max_revision_rounds = 2
+    try:
+        max_revision_rounds = max(0, int(constraints.get("max_revision_rounds", 2)))
+    except Exception:
+        max_revision_rounds = 2
+    if agent_state.strategy_revision_round < max_revision_rounds:
         # 增加修订计数
         agent_state.strategy_revision_round += 1
         
@@ -252,7 +354,17 @@ def check_analysis_completion(state: GraphState) -> Literal["strategist", "wait"
 
 # --- 图构建 ---
 
-def create_trading_workflow():
+def _normalize_orchestration_config(orchestration_config: Dict[str, Any] | None) -> OrchestrationConfig:
+    if isinstance(orchestration_config, dict):
+        return OrchestrationConfig(**orchestration_config)
+    return OrchestrationConfig()
+
+
+def create_trading_workflow(orchestration_config: Dict[str, Any] | None = None):
+    cfg = _normalize_orchestration_config(orchestration_config)
+    enabled_analysis_nodes = [n for n in cfg.enabled_analysis_nodes if n in {"analyst", "sentiment", "macro", "onchain"}]
+    if not enabled_analysis_nodes:
+        enabled_analysis_nodes = ["analyst"]
     # 初始化图
     workflow = StateGraph(GraphState)
 
@@ -264,33 +376,28 @@ def create_trading_workflow():
     
     workflow.add_node("bull_strategist", bull_strategist_node)
     workflow.add_node("bear_strategist", bear_strategist_node)
+    workflow.add_node("cross_examiner", cross_examiner_node)
     workflow.add_node("portfolio_manager", portfolio_manager_node)
     
     workflow.add_node("reviewer", reviewer_node)
     workflow.add_node("reflector", reflector_node)
 
     # 构建结构
-    # 1. 并行启动分析
-    workflow.add_edge(START, "analyst")
-    workflow.add_edge(START, "sentiment")
-    workflow.add_edge(START, "macro")
-    workflow.add_edge(START, "onchain")
+    for node in enabled_analysis_nodes:
+        workflow.add_edge(START, node)
 
-    # 2. 汇聚到多空策略师 (Wait for all analysis)
-    # 任何一个分析节点完成后，都会分别触发多空两方的思考（由于 LangGraph 会等待所有前置边完成）
-    workflow.add_edge("analyst", "bull_strategist")
-    workflow.add_edge("sentiment", "bull_strategist")
-    workflow.add_edge("macro", "bull_strategist")
-    workflow.add_edge("onchain", "bull_strategist")
-    
-    workflow.add_edge("analyst", "bear_strategist")
-    workflow.add_edge("sentiment", "bear_strategist")
-    workflow.add_edge("macro", "bear_strategist")
-    workflow.add_edge("onchain", "bear_strategist")
+    for node in enabled_analysis_nodes:
+        workflow.add_edge(node, "bull_strategist")
+        workflow.add_edge(node, "bear_strategist")
 
     # 3. 策略辩论汇聚到基金经理
-    workflow.add_edge("bull_strategist", "portfolio_manager")
-    workflow.add_edge("bear_strategist", "portfolio_manager")
+    if cfg.enable_cross_examiner:
+        workflow.add_edge("bull_strategist", "cross_examiner")
+        workflow.add_edge("bear_strategist", "cross_examiner")
+        workflow.add_edge("cross_examiner", "portfolio_manager")
+    else:
+        workflow.add_edge("bull_strategist", "portfolio_manager")
+        workflow.add_edge("bear_strategist", "portfolio_manager")
     
     # 4. 基金经理裁决后交给风控
     workflow.add_edge("portfolio_manager", "reviewer")

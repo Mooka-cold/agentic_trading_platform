@@ -5,6 +5,8 @@ from model.state import AgentState, MarketData
 from services.market_data import market_data_service
 from services.market_intel import market_intel_service
 from services.safety_guard import safety_guard_service
+from services.system_config import system_config_service
+from model.policies import DataRoutingPolicy, OrchestrationConfig
 
 
 @dataclass
@@ -15,6 +17,18 @@ class WorkflowStateBuildResult:
 
 
 class WorkflowStateBuilder:
+    def _load_data_routing_policy(self) -> Dict[str, Any]:
+        raw = system_config_service.get_json("DATA_ROUTING_POLICY")
+        if isinstance(raw, dict):
+            return DataRoutingPolicy(**raw).model_dump()
+        return DataRoutingPolicy().model_dump()
+
+    def _load_orchestration_config(self) -> Dict[str, Any]:
+        raw = system_config_service.get_json("WORKFLOW_ORCHESTRATION_CONFIG")
+        if isinstance(raw, dict):
+            return OrchestrationConfig(**raw).model_dump()
+        return OrchestrationConfig().model_dump()
+
     async def build(
         self,
         symbol: str,
@@ -67,6 +81,10 @@ class WorkflowStateBuilder:
             mark_price=market_data.price,
         )
         execution_constraints = market_intel_service.build_execution_constraints(regime=regime, micro=microstructure)
+        routing_policy = self._load_data_routing_policy()
+        orchestration_config = self._load_orchestration_config()
+        execution_constraints["data_routing_policy"] = routing_policy
+        execution_constraints["max_revision_rounds"] = int(orchestration_config.get("max_revision_rounds", 2))
         execution_constraints["data_quality"] = data_quality
         execution_constraints["data_quality_reasons"] = list(unresolved_todos)
         safety = safety_guard_service.evaluate(

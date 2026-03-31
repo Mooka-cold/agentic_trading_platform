@@ -128,6 +128,34 @@ def get_onchain_metrics(
     service = OnChainDataService(db)
     return service.get_latest_snapshot(symbol)
 
+@router.get("/onchain/{symbol}/wallet-events")
+def get_onchain_wallet_events(
+    symbol: str,
+    hours: int = Query(24, ge=1, le=168),
+    limit: int = Query(50, ge=1, le=500),
+    min_usd: float = Query(0.0, ge=0.0),
+    db: Session = Depends(get_user_db)
+) -> Dict[str, Any]:
+    service = OnChainDataService(db)
+    events = service.get_wallet_events(symbol=symbol, hours=hours, limit=limit, min_usd=min_usd)
+    return {
+        "symbol": symbol,
+        "window_hours": hours,
+        "limit": limit,
+        "min_usd": min_usd,
+        "count": len(events),
+        "items": events,
+    }
+
+@router.get("/onchain/{symbol}/wallet-summary")
+def get_onchain_wallet_summary(
+    symbol: str,
+    hours: int = Query(24, ge=1, le=168),
+    db: Session = Depends(get_user_db)
+) -> Dict[str, Any]:
+    service = OnChainDataService(db)
+    return service.get_wallet_summary(symbol=symbol, hours=hours)
+
 @router.get("/kline")
 def get_kline_data(
     symbol: str = Query(..., description="Trading pair, e.g. BTC/USDT"),

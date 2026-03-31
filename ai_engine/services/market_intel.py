@@ -141,11 +141,21 @@ class MarketIntelService:
                 "sl_widen_mult": 1.2,
             },
         }
+        cross_examiner_policy = {
+            "cts_floor": 0.35,
+            "confidence_weight": 1.0,
+            "weakness_penalty": 0.12,
+            "ruin_high_penalty": 0.2,
+            "score_gap_hold_threshold": 0.1,
+            "high_conflict_hold_bias": True,
+            "enforce_hold_bias": False,
+        }
         return {
             "preferred_order_type": preferred_order_type,
             "execution_algo": execution_algo,
             "rr_floor": rr_floor,
             "gate_policy": gate_policy,
+            "cross_examiner_policy": cross_examiner_policy,
         }
 
     def build_hedge_context(self, base_symbol: str, hedge_symbol: str, base_klines: List[Dict[str, Any]], hedge_klines: List[Dict[str, Any]]) -> Dict[str, Any]:

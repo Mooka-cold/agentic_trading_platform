@@ -71,6 +71,30 @@ class OnChainAgent(BaseAgent):
         if oi:
             # Simple heuristic: High OI + Neutral/Bearish Price -> Volatility Incoming
             analysis.append(f"Open Interest is ${oi/1e9:.2f}B.")
+
+        # 3. Wallet Whale Summary (from TechFlow structured events)
+        wallet_summary = data.get("WALLET_SUMMARY") or {}
+        event_count = int(wallet_summary.get("event_count") or 0)
+        onchain_gate = str(wallet_summary.get("trade_gate") or "normal")
+        onchain_gate_reason = wallet_summary.get("trigger_reason")
+        if event_count > 0:
+            to_exchange = int(wallet_summary.get("to_exchange_count") or 0)
+            from_exchange = int(wallet_summary.get("from_exchange_count") or 0)
+            large_count = int(wallet_summary.get("large_event_count") or 0)
+            total_amount_usd = float(wallet_summary.get("total_amount_usd") or 0.0)
+            analysis.append(
+                f"Wallet events {event_count}, large events {large_count}, total ${total_amount_usd/1e6:.2f}M."
+            )
+            if to_exchange >= from_exchange + 2:
+                score -= 1
+                analysis.append("Whale flow tilted to_exchange (potential sell pressure).")
+            elif from_exchange >= to_exchange + 2:
+                score += 1
+                analysis.append("Whale flow tilted from_exchange (potential accumulation).")
+            if large_count >= 3:
+                analysis.append("Multiple large whale transfers detected; raise execution caution.")
+        if onchain_gate != "normal":
+            analysis.append(f"Wallet trade gate={onchain_gate} ({onchain_gate_reason or 'n/a'}).")
             
         signal = "NEUTRAL"
         if score >= 1: signal = "BULLISH"
@@ -88,5 +112,7 @@ class OnChainAgent(BaseAgent):
             session_id,
             artifact=output.dict()
         )
-        
-        return {"onchain_report": output}
+        merged_constraints = dict(state.execution_constraints or {})
+        merged_constraints["onchain_trade_gate"] = onchain_gate
+        merged_constraints["onchain_trade_gate_reason"] = onchain_gate_reason
+        return {"onchain_report": output, "execution_constraints": merged_constraints}

@@ -6,7 +6,7 @@
 
 - 多智能体协同决策：Analyst / Bull / Bear / PM / Reviewer / Reflector
 - 统一交易工作流：采集 → 研判 → 仲裁 → 风控 → 执行 → 复盘
-- 前后端分离架构：Next.js 16 + FastAPI + 多存储分层
+- 前后端分离架构：Vite React + FastAPI + 多存储分层
 - 可审计输出：日志、artifact、历史会话、回放能力
 
 ## 项目结构
@@ -15,7 +15,7 @@
 ai_trading/
 ├── ai_engine/      # AI 工作流与 Agent 编排
 ├── backend/        # 业务 API、交易服务、数据接口
-├── frontend/       # Web 控制台 (Next.js 16)
+├── frontend/       # Web 控制台 (Vite + React + TS)
 ├── crawler/        # 新闻/数据抓取服务
 ├── scheduler/      # 调度与定时任务
 ├── shared/         # 跨服务共享配置与模型
@@ -33,15 +33,21 @@ ai_trading/
 ### 本地启动
 
 ```bash
-git clone https://github.com/Mooka-cold/agentic_trading_platform.git
-cd agentic_trading_platform
-docker-compose up -d db-users db-market redis chromadb
+git clone <your-repo-url>
+cd ai_trading
+docker compose up -d
 ```
 
 ```bash
 cd backend
 pip install -r requirements.txt
-python main.py
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+```bash
+cd ai_engine
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ```bash
@@ -53,6 +59,7 @@ npm run dev
 ## 文档入口
 
 - [文档总览](docs/DOCS_INDEX.md)
+- [项目全景](docs/PROJECT_OVERVIEW.md)
 - [需求文档](docs/REQUIREMENTS.md)
 - [产品设计](docs/PRODUCT_DESIGN.md)
 - [UI 规范](docs/UI_SPEC.md)
@@ -63,8 +70,9 @@ npm run dev
 
 ## 开发与发布基线
 
-- 前端：Next.js 16 + ESLint 9 + webpack 模式
-- 依赖安全：`frontend/package.json` 使用 `overrides` 锁定高风险传递依赖
+- 前端：Vite 5 + React 18 + TypeScript 5
+- 本地代理：`frontend/vite.config.ts` 通过 `/api` 代理 backend
+- 依赖安全：发布前执行审计与构建验证
 - 发布前最小检查：
 
 ```bash
