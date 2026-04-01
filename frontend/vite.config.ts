@@ -4,6 +4,8 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
+const backendTarget = process.env.BACKEND_URL || process.env.VITE_BACKEND_URL || "http://127.0.0.1:3201";
+
 export default defineConfig(({ mode }) => ({
   server: {
     host: "0.0.0.0",
@@ -13,7 +15,7 @@ export default defineConfig(({ mode }) => ({
     },
     proxy: {
       '/api': {
-        target: process.env.BACKEND_URL || 'http://127.0.0.1:8000',
+        target: backendTarget,
         changeOrigin: true,
       },
     },

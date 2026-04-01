@@ -24,12 +24,12 @@ import {
 
 const navItems = [
   { title: 'Overview', url: '/', icon: LayoutDashboard },
-  { title: 'Orchestration', url: '/orchestration', icon: GitBranch },
-  { title: 'Swarm', url: '/swarm', icon: Orbit },
   { title: 'Dashboard', url: '/dashboard', icon: ChartCandlestick },
+  { title: 'Swarm', url: '/swarm', icon: Orbit },
   { title: 'Portfolio', url: '/portfolio', icon: Activity },
   { title: 'Session', url: '/session', icon: FileSearch },
   { title: 'Reflection', url: '/reflection', icon: Brain },
+  { title: 'Orchestration', url: '/orchestration', icon: GitBranch },
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
 

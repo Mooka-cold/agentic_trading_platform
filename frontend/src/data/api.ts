@@ -85,3 +85,13 @@ export async function fetchLatestSignal(symbol: string): Promise<any | null> {
   if (!res.ok) throw new Error('Failed to fetch latest signal');
   return res.json();
 }
+
+export async function fetchSecondSeries(symbol: string, window = 600): Promise<{ symbol: string; window: number; points: any[] }> {
+  const params = new URLSearchParams({
+    symbol,
+    window: String(window),
+  });
+  const res = await fetch(`${API_BASE}/market/seconds?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch second series');
+  return res.json();
+}

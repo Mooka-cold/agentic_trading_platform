@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Panel, MetricCard, StatusBadge } from '@/components/shared/StatusBadge';
-import { fetchLatestSignal, fetchMarketKline, fetchMarketTicker, fetchNews } from '@/data/api';
+import { fetchLatestSignal, fetchMarketKline, fetchMarketTicker, fetchNews, fetchSecondSeries } from '@/data/api';
 import { Activity, Newspaper, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -67,7 +67,7 @@ type SignalItem = {
 } | null;
 
 const SYMBOL_OPTIONS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'];
-const INTERVAL_OPTIONS = ['1m', '5m', '15m', '1h', '4h', '1d'];
+const INTERVAL_OPTIONS = ['1m', '1h', '1d'];
 
 export default function DashboardPage() {
   const [symbol, setSymbol] = useState('BTC/USDT');
@@ -82,22 +82,70 @@ export default function DashboardPage() {
   const refresh = async () => {
     setLoading(true);
     setError(null);
-    try {
-      const [klineData, tickerData, newsData, signalData] = await Promise.all([
-        fetchMarketKline(symbol, interval, 120),
-        fetchMarketTicker(symbol, 10),
-        fetchNews(20),
-        fetchLatestSignal(symbol),
-      ]);
-      setKline(klineData || []);
-      setTicker(tickerData || null);
-      setNews(newsData || []);
-      setSignal(signalData || null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '加载失败');
-    } finally {
-      setLoading(false);
+    const [klineResult, tickerResult, newsResult, signalResult] = await Promise.allSettled([
+      fetchMarketKline(symbol, interval, 120),
+      fetchMarketTicker(symbol, 10),
+      fetchNews(20),
+      fetchLatestSignal(symbol),
+    ]);
+
+    const failedModules: string[] = [];
+
+    if (klineResult.status === 'fulfilled' && (klineResult.value || []).length > 0) {
+      setKline(klineResult.value || []);
+    } else {
+      setKline([]);
+      failedModules.push('K线');
     }
+
+    if (tickerResult.status === 'fulfilled') {
+      setTicker(tickerResult.value || null);
+    } else {
+      setTicker(null);
+      failedModules.push('Ticker/OrderBook');
+    }
+
+    if (newsResult.status === 'fulfilled') {
+      setNews(newsResult.value || []);
+    } else {
+      setNews([]);
+      failedModules.push('新闻');
+    }
+
+    if (signalResult.status === 'fulfilled') {
+      setSignal(signalResult.value || null);
+    } else {
+      setSignal(null);
+      failedModules.push('LLM解读');
+    }
+
+    if (failedModules.length) {
+      setError(`部分数据加载失败：${failedModules.join('、')}`);
+    }
+
+    if (klineResult.status !== 'fulfilled' || (klineResult.value || []).length === 0) {
+      try {
+        const secondSeries = await fetchSecondSeries(symbol, 600);
+        const points = secondSeries?.points || [];
+        if (points.length) {
+          const fallbackKline: KlineItem[] = points.map((p) => {
+            const price = Number(p.price || 0);
+            return {
+              time: Number(p.time),
+              open: price,
+              high: price,
+              low: price,
+              close: price,
+              volume: 0,
+            };
+          });
+          setKline(fallbackKline);
+          setError('K线历史数据暂缺，已回退为秒级价格曲线');
+        }
+      } catch {}
+    }
+
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -162,13 +210,13 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
         <MetricCard label="Price" value={ticker?.price ? `$${ticker.price.toLocaleString()}` : '—'} />
-        <MetricCard label="24H Change" value={ticker ? `${ticker.change24h.toFixed(2)}%` : '—'} trend={(ticker?.change24h || 0) >= 0 ? 'up' : 'down'} />
+        <MetricCard label="24H Change" value={typeof ticker?.change24h === 'number' ? `${ticker.change24h.toFixed(2)}%` : '—'} trend={(ticker?.change24h || 0) >= 0 ? 'up' : 'down'} />
         <MetricCard label="RSI(14)" value={latest?.rsi?.toFixed(2) ?? '—'} />
         <MetricCard label="MACD" value={latest?.macd?.toFixed(4) ?? '—'} />
         <MetricCard label="ATR(14)" value={latest?.atr_14?.toFixed(4) ?? '—'} />
-        <MetricCard label="Spread" value={ticker ? `${ticker.spread.toFixed(4)}` : '—'} />
-        <MetricCard label="Spread %" value={ticker ? `${ticker.spread_pct.toFixed(3)}%` : '—'} />
-        <MetricCard label="Imbalance" value={ticker ? ticker.depth_imbalance.toFixed(3) : '—'} trend={(ticker?.depth_imbalance || 0) >= 0 ? 'up' : 'down'} />
+        <MetricCard label="Spread" value={typeof ticker?.spread === 'number' ? `${ticker.spread.toFixed(4)}` : '—'} />
+        <MetricCard label="Spread %" value={typeof ticker?.spread_pct === 'number' ? `${ticker.spread_pct.toFixed(3)}%` : '—'} />
+        <MetricCard label="Imbalance" value={typeof ticker?.depth_imbalance === 'number' ? ticker.depth_imbalance.toFixed(3) : '—'} trend={(ticker?.depth_imbalance || 0) >= 0 ? 'up' : 'down'} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
