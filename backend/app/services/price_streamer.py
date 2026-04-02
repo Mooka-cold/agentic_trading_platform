@@ -5,7 +5,10 @@ import logging
 import time
 from collections import deque
 from typing import Deque, Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from sqlalchemy import text
 from app.services.redis_stream import redis_stream
+from app.db.session import SessionLocalMarket
 
 logger = logging.getLogger("price_streamer")
 
@@ -35,6 +38,41 @@ class PriceStreamer:
         self.is_running = False
         self.task = None
         self.initialized = True
+
+    def _persist_second_kline(self, symbol: str, point: dict):
+        ts = datetime.fromtimestamp(int(point["time"]), tz=timezone.utc)
+        price = float(point["price"])
+        session = SessionLocalMarket()
+        try:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO market_klines (time, symbol, interval, open, high, low, close, volume, source)
+                    VALUES (:time, :symbol, '1s', :open, :high, :low, :close, :volume, :source)
+                    ON CONFLICT (time, symbol, interval)
+                    DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        source = EXCLUDED.source
+                    """
+                ),
+                {
+                    "time": ts,
+                    "symbol": symbol,
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "close": price,
+                    "volume": 0.0,
+                    "source": "binance_ws_1s",
+                },
+            )
+            session.commit()
+        finally:
+            session.close()
 
     async def start(self, symbols: list):
         if self.is_running:
@@ -147,6 +185,7 @@ class PriceStreamer:
                         series[-1] = point
                     else:
                         series.append(point)
+                        await asyncio.to_thread(self._persist_second_kline, symbol, point)
                     await redis_stream.set_cache(
                         f"market:ticker:{symbol}", 
                         data, 

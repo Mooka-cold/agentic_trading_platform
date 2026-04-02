@@ -83,6 +83,12 @@ async def task_sync_onchain():
 async def task_run_sentiment_interpreter():
     await trigger_task("Run Sentiment Interpreter", f"{AI_ENGINE_URL}/sentiment/interpreter/run")
 
+async def task_generate_latest_signals():
+    await trigger_task("Generate Latest Signals", f"{BACKEND_URL}/api/v1/jobs/analyze")
+
+async def task_solidify_market_rollups():
+    await trigger_task("Solidify Market Rollups", f"{BACKEND_URL}/api/v1/market/rollup/solidify?limit_hint=600")
+
 async def task_run_llm_daily_calibration():
     symbol = quote_plus(settings.CALIBRATION_SYMBOL)
     window_days = settings.CALIBRATION_WINDOW_DAYS
@@ -121,6 +127,8 @@ async def main():
     scheduler.add_job(task_sync_cryptopanic, "interval", minutes=15, id="sync_cryptopanic")
     scheduler.add_job(task_sync_techflow, "interval", minutes=10, id="sync_techflow")
     scheduler.add_job(task_run_sentiment_interpreter, "interval", minutes=1, id="run_sentiment_interpreter")
+    scheduler.add_job(task_generate_latest_signals, "interval", minutes=5, id="generate_latest_signals")
+    scheduler.add_job(task_solidify_market_rollups, "interval", minutes=2, id="solidify_market_rollups")
     
     # 3. Risk Monitor (Guardian)
     scheduler.add_job(task_monitor_positions, "interval", minutes=1, id="monitor_positions")

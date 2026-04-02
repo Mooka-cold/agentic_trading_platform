@@ -3,7 +3,7 @@ import asyncio
 import hashlib
 import json
 from typing import List, Dict, Optional, Any, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import create_engine, text
 from core.config import settings
@@ -57,6 +57,13 @@ class SentimentService:
             "STABLECOIN": {"weight": 0.8},
             "EQUITY_CRYPTO_PROXY": {"weight": 0.65},
             "MACRO": {"weight": 0.7}
+        }
+        self.market_labels = {
+            "CRYPTO": "加密资产",
+            "US_EQUITY": "美股",
+            "FX": "外汇",
+            "RATES": "利率",
+            "COMMODITY": "商品"
         }
         self.reload_tuning_from_system_config()
 
@@ -286,6 +293,9 @@ class SentimentService:
                 id BIGSERIAL PRIMARY KEY,
                 news_id UUID UNIQUE NOT NULL,
                 title TEXT,
+                raw_summary TEXT,
+                language TEXT,
+                source_tier TEXT,
                 source TEXT,
                 published_at TIMESTAMPTZ,
                 url TEXT,
@@ -324,6 +334,9 @@ class SentimentService:
             "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS fingerprint_updated_at TIMESTAMPTZ",
             "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS reinterpret_count INTEGER DEFAULT 0",
             "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS last_reinterpret_reason TEXT",
+            "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS raw_summary TEXT",
+            "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS language TEXT",
+            "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS source_tier TEXT",
             "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS asset_clusters JSONB DEFAULT '[]'::jsonb",
             "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS factor_tags JSONB DEFAULT '[]'::jsonb",
             "ALTER TABLE news_interpretations ADD COLUMN IF NOT EXISTS impact_tags JSONB DEFAULT '[]'::jsonb",
@@ -340,10 +353,48 @@ class SentimentService:
         with self.engine.begin() as conn:
             for stmt in ddl_statements:
                 conn.execute(text(stmt))
+            conn.execute(text("""
+                UPDATE news_interpretations ni
+                SET raw_summary = n.summary
+                FROM news n
+                WHERE ni.news_id = n.id
+                  AND COALESCE(ni.raw_summary, '') = ''
+                  AND COALESCE(n.summary, '') <> ''
+            """))
+            missing_rows = conn.execute(text("""
+                SELECT news_id, title, raw_summary, source
+                FROM news_interpretations
+                WHERE COALESCE(language, '') = ''
+                   OR COALESCE(source_tier, '') = ''
+            """)).mappings().all()
+            for row in missing_rows:
+                conn.execute(text("""
+                    UPDATE news_interpretations
+                    SET language = :language,
+                        source_tier = :source_tier
+                    WHERE news_id = CAST(:news_id AS UUID)
+                """), {
+                    "news_id": str(row["news_id"]),
+                    "language": self._infer_language(row.get("title"), row.get("raw_summary")),
+                    "source_tier": self._infer_source_tier(row.get("source"))
+                })
         self._schema_ready = True
 
     def _normalize_text_for_fingerprint(self, value: Any) -> str:
         return " ".join(str(value or "").strip().lower().split())
+
+    def _infer_language(self, *parts: Any) -> str:
+        text = " ".join(str(part or "") for part in parts)
+        return "zh" if any("\u4e00" <= ch <= "\u9fff" for ch in text) else "en"
+
+    def _infer_source_tier(self, source_name: Any) -> str:
+        source = str(source_name or "unknown")
+        weight = self.source_weights.get(source, 0.75)
+        if weight >= 0.9:
+            return "top_tier"
+        if weight >= 0.75:
+            return "mainstream"
+        return "secondary"
 
     def _compute_content_fingerprint(self, item: Dict[str, Any]) -> str:
         title = self._normalize_text_for_fingerprint(item.get("title"))
@@ -356,11 +407,14 @@ class SentimentService:
         self._ensure_interpretation_schema()
         upsert_sql = text("""
             INSERT INTO news_interpretations
-            (news_id, title, source, published_at, url, interpret_status, next_retry_at, interpreter_version, content_fingerprint, fingerprint_algo, fingerprint_updated_at, updated_at)
+            (news_id, title, raw_summary, language, source_tier, source, published_at, url, interpret_status, next_retry_at, interpreter_version, content_fingerprint, fingerprint_algo, fingerprint_updated_at, updated_at)
             VALUES
-            (:news_id, :title, :source, :published_at, :url, 'NEW', NOW(), :interpreter_version, :content_fingerprint, :fingerprint_algo, NOW(), NOW())
+            (:news_id, :title, :raw_summary, :language, :source_tier, :source, :published_at, :url, 'NEW', NOW(), :interpreter_version, :content_fingerprint, :fingerprint_algo, NOW(), NOW())
             ON CONFLICT (news_id) DO UPDATE SET
                 title = EXCLUDED.title,
+                raw_summary = EXCLUDED.raw_summary,
+                language = EXCLUDED.language,
+                source_tier = EXCLUDED.source_tier,
                 source = EXCLUDED.source,
                 published_at = EXCLUDED.published_at,
                 url = EXCLUDED.url,
@@ -411,9 +465,14 @@ class SentimentService:
                 if not item.get("id"):
                     continue
                 content_fingerprint = self._compute_content_fingerprint(item)
+                language = self._infer_language(item.get("title"), item.get("summary"))
+                source_tier = self._infer_source_tier(item.get("source"))
                 conn.execute(upsert_sql, {
                     "news_id": item["id"],
                     "title": item.get("title"),
+                    "raw_summary": item.get("summary"),
+                    "language": language,
+                    "source_tier": source_tier,
                     "source": item.get("source"),
                     "published_at": item.get("published_at"),
                     "url": item.get("url"),
@@ -441,7 +500,7 @@ class SentimentService:
                 updated_at = NOW()
             FROM cte
             WHERE n.id = cte.id
-            RETURNING n.id, n.news_id, n.title, n.source, n.published_at, n.url
+            RETURNING n.id, n.news_id, n.title, n.raw_summary AS summary, n.language, n.source_tier, n.source, n.published_at, n.url
         """)
         with self.engine.begin() as conn:
             rows = conn.execute(claim_sql, {"limit": limit}).mappings().all()
@@ -460,6 +519,8 @@ class SentimentService:
                 magnitude = :magnitude,
                 confidence = :confidence,
                 severity = :severity,
+                language = :language,
+                source_tier = :source_tier,
                 event_type_l1 = :event_type_l1,
                 event_type_l2 = :event_type_l2,
                 summary_cn = :summary_cn,
@@ -487,6 +548,8 @@ class SentimentService:
                 "magnitude": payload.get("magnitude"),
                 "confidence": payload.get("confidence"),
                 "severity": payload.get("severity"),
+                "language": payload.get("language"),
+                "source_tier": payload.get("source_tier"),
                 "event_type_l1": payload.get("event_type_l1"),
                 "event_type_l2": payload.get("event_type_l2"),
                 "summary_cn": payload.get("summary_cn"),
@@ -542,9 +605,9 @@ class SentimentService:
         self._ensure_interpretation_schema()
         base_asset = target_symbol.split("/")[0].upper()
         sql = text("""
-            SELECT news_id, source, title, url, published_at, bias, magnitude, confidence, severity, final_status,
+            SELECT news_id, source, title, raw_summary, language, source_tier, url, published_at, bias, magnitude, confidence, severity, final_status,
                    assets, asset_clusters, factor_tags, impact_tags, mapping_version,
-                   cross_market_impacts, summary_cn, interpreted_at, noise_flags
+                   cross_market_impacts, evidence_quotes, summary_cn, interpreted_at, noise_flags
             FROM news_interpretations
             WHERE interpret_status = 'INTERPRETED'
               AND interpreted_at >= NOW() - (:lookback_hours || ' hours')::interval
@@ -565,12 +628,14 @@ class SentimentService:
                 include = self._matches_target_symbol(base_asset, assets, asset_clusters, impact_tags)
             if include:
                 impacts = row["cross_market_impacts"] if isinstance(row["cross_market_impacts"], list) else (json.loads(row["cross_market_impacts"]) if row["cross_market_impacts"] else [])
+                evidence_quotes = row["evidence_quotes"] if isinstance(row["evidence_quotes"], list) else (json.loads(row["evidence_quotes"]) if row.get("evidence_quotes") else [])
                 item = dict(row)
                 item["assets"] = assets
                 item["asset_clusters"] = asset_clusters
                 item["factor_tags"] = factor_tags
                 item["impact_tags"] = impact_tags
                 item["cross_market_impacts"] = impacts
+                item["evidence_quotes"] = evidence_quotes
                 item["noise_flags"] = row["noise_flags"] if isinstance(row["noise_flags"], list) else (json.loads(row["noise_flags"]) if row.get("noise_flags") else [])
                 results.append(item)
         return results
@@ -718,15 +783,29 @@ class SentimentService:
         rows = self.load_interpreted_news(target_symbol=target_symbol, limit=limit, lookback_hours=48, filter_by_symbol=filter_by_symbol)
         result: List[Dict[str, Any]] = []
         for row in rows:
+            evidence_quotes = row.get("evidence_quotes") or []
+            final_status = row.get("final_status")
+            severity = row.get("severity")
+            confidence = float(row.get("confidence") or 0.0)
+            magnitude = float(row.get("magnitude") or 0.0)
+            if not evidence_quotes:
+                final_status = "insufficient_evidence"
+                if str(severity or "").lower() in {"high", "critical"}:
+                    severity = "medium"
+                confidence = min(confidence, 0.40)
+                magnitude = min(magnitude, 0.55)
             result.append({
                 "news_id": str(row.get("news_id")),
                 "source": row.get("source"),
                 "published_at": str(row.get("published_at")),
+                "raw_summary": row.get("raw_summary") or "",
+                "language": row.get("language") or "",
+                "source_tier": row.get("source_tier") or "",
                 "bias": row.get("bias"),
-                "magnitude": float(row.get("magnitude") or 0.0),
-                "confidence": float(row.get("confidence") or 0.0),
-                "severity": row.get("severity"),
-                "final_status": row.get("final_status"),
+                "magnitude": magnitude,
+                "confidence": confidence,
+                "severity": severity,
+                "final_status": final_status,
                 "summary_cn": row.get("summary_cn"),
                 "assets": row.get("assets") or [],
                 "asset_clusters": row.get("asset_clusters") or [],
@@ -734,9 +813,51 @@ class SentimentService:
                 "impact_tags": row.get("impact_tags") or [],
                 "mapping_version": row.get("mapping_version") or self.taxonomy_version,
                 "cross_market_impacts": row.get("cross_market_impacts") or [],
+                "evidence_quotes": evidence_quotes,
                 "noise_flags": row.get("noise_flags") or []
             })
         return result
+
+    def get_sentiment_dashboard(self, target_symbol: str = "BTC/USDT") -> Dict[str, Any]:
+        current_hour_start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        current_hour_end = current_hour_start + timedelta(hours=1)
+        rows = self.load_interpreted_news(
+            target_symbol=target_symbol,
+            limit=1500,
+            lookback_hours=72,
+            filter_by_symbol=True
+        )
+        markets = [{"key": key, "label": label} for key, label in self.market_labels.items()]
+        current_hour = self._build_market_window(rows, target_symbol, current_hour_start, current_hour_end)
+        rolling_6h = self._build_market_window(rows, target_symbol, current_hour_end - timedelta(hours=6), current_hour_end)
+        rolling_24h = self._build_market_window(rows, target_symbol, current_hour_end - timedelta(hours=24), current_hour_end)
+        chart = []
+        for idx in range(24):
+            bucket_start = current_hour_end - timedelta(hours=24 - idx)
+            bucket_end = bucket_start + timedelta(hours=1)
+            hourly_scores = self._aggregate_market_scores(rows, target_symbol, bucket_start, bucket_end)
+            rolling6_scores = self._aggregate_market_scores(rows, target_symbol, bucket_end - timedelta(hours=6), bucket_end)
+            rolling24_scores = self._aggregate_market_scores(rows, target_symbol, bucket_end - timedelta(hours=24), bucket_end)
+            point = {
+                "bucket_start": bucket_start.isoformat(),
+                "bucket_end": bucket_end.isoformat(),
+                "label": f"{bucket_start.strftime('%H:%M')}",
+                "markets": {}
+            }
+            for market in self.market_labels.keys():
+                point["markets"][market] = {
+                    "hourly": hourly_scores.get(market, 0.0),
+                    "rolling6h": rolling6_scores.get(market, 0.0),
+                    "rolling24h": rolling24_scores.get(market, 0.0)
+                }
+            chart.append(point)
+        return {
+            "markets": markets,
+            "current_hour": current_hour,
+            "rolling_6h": rolling_6h,
+            "rolling_24h": rolling_24h,
+            "chart": chart
+        }
 
     def get_interpretation_monitor(self, hours: int = 24) -> Dict[str, Any]:
         self._ensure_interpretation_schema()
@@ -828,6 +949,108 @@ class SentimentService:
 
     def _clamp(self, value: float, low: float, high: float) -> float:
         return max(low, min(high, value))
+
+    def _direction_to_signed(self, direction: str) -> float:
+        mapping = {
+            "bullish": 1.0,
+            "bearish": -1.0,
+            "mixed": 0.0,
+            "neutral": 0.0,
+            "unknown": 0.0
+        }
+        return mapping.get(str(direction or "").lower(), 0.0)
+
+    def _score_to_bias(self, score: float) -> str:
+        if score >= 1.5:
+            return "bullish"
+        if score <= -1.5:
+            return "bearish"
+        return "neutral"
+
+    def _row_market_impacts(self, row: Dict[str, Any], base_asset: str) -> Dict[str, float]:
+        impacts = row.get("cross_market_impacts") or []
+        result: Dict[str, float] = {}
+        for impact in impacts:
+            if not isinstance(impact, dict):
+                continue
+            market = str(impact.get("market") or "").upper()
+            if market not in self.market_labels:
+                continue
+            direction = self._direction_to_signed(str(impact.get("direction") or "unknown"))
+            magnitude = self._clamp(float(impact.get("magnitude") or 0.0), 0.0, 1.0)
+            confidence = self._clamp(float(impact.get("confidence") or 0.0), 0.0, 1.0)
+            result[market] = result.get(market, 0.0) + direction * magnitude * confidence
+        if "CRYPTO" not in result and self._matches_target_symbol(
+            base_asset,
+            row.get("assets") or [],
+            row.get("asset_clusters") or [],
+            row.get("impact_tags") or []
+        ):
+            direction = self._direction_to_signed(str(row.get("bias") or "unknown"))
+            magnitude = self._clamp(float(row.get("magnitude") or 0.0), 0.0, 1.0)
+            confidence = self._clamp(float(row.get("confidence") or 0.0), 0.0, 1.0)
+            result["CRYPTO"] = direction * magnitude * confidence
+        return result
+
+    def _aggregate_market_scores(
+        self,
+        rows: List[Dict[str, Any]],
+        target_symbol: str,
+        start_at: datetime,
+        end_at: datetime
+    ) -> Dict[str, float]:
+        base_asset = target_symbol.split("/")[0].upper()
+        totals = {market: 0.0 for market in self.market_labels.keys()}
+        weights = {market: 0.0 for market in self.market_labels.keys()}
+        for row in rows:
+            published_at = self._parse_published_at(str(row.get("published_at") or ""))
+            if published_at < start_at or published_at >= end_at:
+                continue
+            source = str(row.get("source") or "unknown")
+            source_weight = self.source_weights.get(source, 0.75)
+            impacts = self._row_market_impacts(row, base_asset)
+            for market, signed_value in impacts.items():
+                weighted_value = signed_value * source_weight
+                totals[market] += weighted_value
+                weights[market] += max(abs(weighted_value), 0.05)
+        scores: Dict[str, float] = {}
+        for market in self.market_labels.keys():
+            raw = totals[market] / weights[market] if weights[market] > 0 else 0.0
+            scores[market] = round(self._clamp(raw, -1.0, 1.0) * 10, 1)
+        return scores
+
+    def _build_market_window(
+        self,
+        rows: List[Dict[str, Any]],
+        target_symbol: str,
+        start_at: datetime,
+        end_at: datetime
+    ) -> Dict[str, Any]:
+        base_asset = target_symbol.split("/")[0].upper()
+        scores = self._aggregate_market_scores(rows, target_symbol, start_at, end_at)
+        cards = []
+        for market, label in self.market_labels.items():
+            sample_count = 0
+            for row in rows:
+                published_at = self._parse_published_at(str(row.get("published_at") or ""))
+                if published_at < start_at or published_at >= end_at:
+                    continue
+                impacts = self._row_market_impacts(row, base_asset)
+                if market in impacts:
+                    sample_count += 1
+            cards.append({
+                "market": market,
+                "label": label,
+                "score": scores.get(market, 0.0),
+                "bias": self._score_to_bias(scores.get(market, 0.0)),
+                "sample_count": sample_count
+            })
+        return {
+            "start_at": start_at.isoformat(),
+            "end_at": end_at.isoformat(),
+            "label": f"{start_at.strftime('%H:%M')} - {end_at.strftime('%H:%M')}",
+            "scores": cards
+        }
 
     def _infer_symbol_clusters(self, base_asset: str) -> List[str]:
         symbol = str(base_asset or "").upper()

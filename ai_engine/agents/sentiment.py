@@ -23,23 +23,44 @@ class SentimentAgent(BaseAgent):
     def __init__(self):
         super().__init__("sentiment", "The Sentiment Analyst")
 
+    def _infer_language(self, *parts: str) -> str:
+        text = " ".join(str(part or "") for part in parts)
+        return "zh" if any("\u4e00" <= ch <= "\u9fff" for ch in text) else "en"
+
+    def _infer_source_tier(self, source_name: str) -> str:
+        source = str(source_name or "unknown")
+        weight = sentiment_service.source_weights.get(source, 0.75)
+        if weight >= 0.9:
+            return "top_tier"
+        if weight >= 0.75:
+            return "mainstream"
+        return "secondary"
+
     async def _interpret_one_news(self, item: dict) -> dict:
         title = str(item.get("title") or "")
-        summary = ""
+        summary = str(item.get("summary") or "")
+        language = str(item.get("language") or self._infer_language(title, summary))
+        source_tier = str(item.get("source_tier") or self._infer_source_tier(str(item.get("source") or "unknown")))
+        content_parts = [title]
+        if summary and summary != title:
+            content_parts.append(summary)
+        content = "\n".join(content_parts)[:4000]
         result = await self.call_llm(
             prompt_vars={
                 "news_id": str(item.get("news_id") or item.get("id") or ""),
                 "published_at": str(item.get("published_at") or ""),
                 "source_name": str(item.get("source") or "unknown"),
-                "source_tier": "mainstream",
-                "language": "zh",
+                "source_tier": source_tier,
+                "language": language,
                 "title": title,
                 "summary": summary,
-                "content": title
+                "content": content
             },
             output_model=NewsInterpretationOutput,
             prompt_name="sentiment_news_interpreter"
         )
+        result["language"] = language
+        result["source_tier"] = source_tier
         result["magnitude"] = max(0.0, min(1.0, float(result.get("magnitude", 0.0))))
         result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
         if "evidence_quotes" not in result or result["evidence_quotes"] is None:

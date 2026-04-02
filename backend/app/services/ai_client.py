@@ -12,7 +12,11 @@ async def analyze_and_store(symbol: str):
     print(f"🧠 Asking AI Engine to analyze {symbol}...")
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(AI_ENGINE_URL, json={"symbol": symbol}, timeout=30.0)
+            response = await client.post(
+                AI_ENGINE_URL,
+                json={"symbol": symbol},
+                timeout=settings.LLM_TIMEOUT_SECONDS,
+            )
             
             if response.status_code == 200:
                 data = response.json()
@@ -25,7 +29,7 @@ async def analyze_and_store(symbol: str):
                         action=data.get("action", "HOLD"),
                         confidence=data.get("confidence", 0.0),
                         reasoning=data.get("reasoning", ""),
-                        model_used="qwen-plus"
+                        model_used=data.get("model_used", settings.LLM_MODEL)
                     )
                     db.add(signal)
                     db.commit()

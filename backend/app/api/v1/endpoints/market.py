@@ -14,10 +14,152 @@ router = APIRouter()
 def _active_symbols() -> List[str]:
     return get_schedule_symbols_from_env()
 
+def _interval_to_seconds(interval: str) -> Optional[int]:
+    mapping = {"1s": 1, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+    return mapping.get(interval)
+
+def _rollup_symbol_interval(db: Session, symbol: str, src_interval: str, dst_interval: str, limit_hint: int = 300) -> int:
+    src_seconds = _interval_to_seconds(src_interval)
+    dst_seconds = _interval_to_seconds(dst_interval)
+    if src_seconds is None or dst_seconds is None or dst_seconds <= src_seconds or (dst_seconds % src_seconds) != 0:
+        return 0
+
+    last_dst = db.execute(
+        text(
+            """
+            SELECT MAX(time) AS last_time
+            FROM market_klines
+            WHERE symbol = :symbol AND interval = :interval
+            """
+        ),
+        {"symbol": symbol, "interval": dst_interval},
+    ).scalar()
+    if last_dst:
+        start_time = last_dst - timedelta(seconds=dst_seconds)
+    else:
+        lookback_seconds = min(max(dst_seconds * max(limit_hint, 1), 3600), 7 * 24 * 3600)
+        start_time = datetime.utcnow() - timedelta(seconds=lookback_seconds)
+
+    rows = db.execute(
+        text(
+            """
+            SELECT time, open, high, low, close, volume
+            FROM market_klines
+            WHERE symbol = :symbol AND interval = :interval AND time >= :start_time
+            ORDER BY time ASC
+            """
+        ),
+        {"symbol": symbol, "interval": src_interval, "start_time": start_time},
+    ).fetchall()
+    if len(rows) < 2:
+        return 0
+
+    df = pd.DataFrame(
+        [
+            {
+                "time": row.time,
+                "open": float(row.open),
+                "high": float(row.high),
+                "low": float(row.low),
+                "close": float(row.close),
+                "volume": float(row.volume or 0.0),
+            }
+            for row in rows
+        ]
+    )
+    if df.empty:
+        return 0
+
+    epoch_sec = (pd.to_datetime(df["time"], utc=True).astype("int64") // 10**9).astype("int64")
+    bucket_sec = (epoch_sec // dst_seconds) * dst_seconds
+    df["bucket_time"] = pd.to_datetime(bucket_sec, unit="s", utc=True)
+    grouped = df.groupby("bucket_time", as_index=False).agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+    )
+    if grouped.empty:
+        return 0
+
+    if last_dst is not None:
+        grouped = grouped[grouped["bucket_time"] > pd.to_datetime(last_dst, utc=True)]
+        if grouped.empty:
+            return 0
+
+    grouped = grouped.tail(limit_hint)
+    payload = [
+        {
+            "time": row.bucket_time.to_pydatetime(),
+            "symbol": symbol,
+            "interval": dst_interval,
+            "open": float(row.open),
+            "high": float(row.high),
+            "low": float(row.low),
+            "close": float(row.close),
+            "volume": float(row.volume),
+            "source": f"derived_from_{src_interval}",
+        }
+        for row in grouped.itertuples(index=False)
+    ]
+    db.execute(
+        text(
+            """
+            INSERT INTO market_klines (time, symbol, interval, open, high, low, close, volume, source)
+            VALUES (:time, :symbol, :interval, :open, :high, :low, :close, :volume, :source)
+            ON CONFLICT (time, symbol, interval)
+            DO UPDATE SET
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                source = EXCLUDED.source
+            """
+        ),
+        payload,
+    )
+    db.commit()
+    return len(payload)
+
+def _solidify_rollups(db: Session, symbols: List[str], limit_hint: int = 300) -> Dict[str, Dict[str, int]]:
+    chain = [("1s", "1m"), ("1m", "5m"), ("5m", "15m"), ("15m", "1h"), ("1h", "4h"), ("4h", "1d")]
+    stats: Dict[str, Dict[str, int]] = {}
+    for symbol in symbols:
+        symbol_stats: Dict[str, int] = {}
+        for src, dst in chain:
+            count = _rollup_symbol_interval(db, symbol, src, dst, limit_hint=limit_hint)
+            symbol_stats[f"{src}->{dst}"] = count
+        stats[symbol] = symbol_stats
+    return stats
+
+def _backfill_from_second_klines(db: Session, symbol: str, interval: str, limit: int) -> int:
+    if interval not in {"1m", "5m", "15m", "1h"}:
+        return 0
+    src_map = {"1m": "1s", "5m": "1m", "15m": "5m", "1h": "15m"}
+    return _rollup_symbol_interval(db, symbol, src_map[interval], interval, limit_hint=max(limit, 100))
+
 @router.get("/symbols")
 def get_market_symbols() -> Dict[str, Any]:
     symbols = _active_symbols()
     return {"symbols": symbols, "count": len(symbols)}
+
+@router.post("/rollup/solidify")
+def solidify_market_rollups(
+    symbols: Optional[str] = Query(None, description="Comma separated symbols, e.g. BTC/USDT,ETH/USDT"),
+    limit_hint: int = Query(300, ge=50, le=5000),
+    db: Session = Depends(get_market_db),
+) -> Dict[str, Any]:
+    target_symbols = [s.strip() for s in (symbols or "").split(",") if s.strip()] or _active_symbols()
+    stats = _solidify_rollups(db, target_symbols, limit_hint=limit_hint)
+    total_inserted = sum(v for symbol_stats in stats.values() for v in symbol_stats.values())
+    return {
+        "symbols": target_symbols,
+        "limit_hint": limit_hint,
+        "total_inserted": total_inserted,
+        "stats": stats,
+    }
 
 @router.get("/ticker")
 async def get_market_ticker(
@@ -159,7 +301,7 @@ def get_onchain_wallet_summary(
 @router.get("/kline")
 def get_kline_data(
     symbol: str = Query(..., description="Trading pair, e.g. BTC/USDT"),
-    interval: str = Query("1m", description="Timeframe: 1m, 1h, 4h, 1d"),
+    interval: str = Query("1m", description="Timeframe: 1m, 5m, 15m, 1h, 4h, 1d"),
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_market_db)
 ) -> Any:
@@ -186,7 +328,11 @@ def get_kline_data(
     result = db.execute(query, {"symbol": symbol, "interval": interval, "limit": limit}).fetchall()
     
     if not result:
-        return []
+        inserted = _backfill_from_second_klines(db, symbol, interval, limit)
+        if inserted > 0:
+            result = db.execute(query, {"symbol": symbol, "interval": interval, "limit": limit}).fetchall()
+        if not result:
+            return []
 
     data = []
 

@@ -29,6 +29,48 @@ async def reload_ai_engine():
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to reload AI Engine: {e}")
 
+@router.get("/sentiment/aggregate")
+async def get_sentiment_aggregate(symbol: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        try:
+            resp = await client.get(f"{settings.AI_ENGINE_URL}/sentiment/aggregate", params={"symbol": symbol})
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            return resp.json()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch sentiment aggregate: {e}")
+
+@router.get("/sentiment/interpretations")
+async def get_sentiment_interpretations(symbol: str, limit: int = 20, scope: str = "symbol"):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        try:
+            resp = await client.get(
+                f"{settings.AI_ENGINE_URL}/sentiment/interpretations",
+                params={"symbol": symbol, "limit": limit, "scope": scope},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            return resp.json()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch sentiment interpretations: {e}")
+
+@router.get("/sentiment/dashboard")
+async def get_sentiment_dashboard(symbol: str):
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        try:
+            resp = await client.get(f"{settings.AI_ENGINE_URL}/sentiment/dashboard", params={"symbol": symbol})
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            return resp.json()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch sentiment dashboard: {e}")
+
 @router.get("/config", response_model=List[SystemConfigSchema])
 def get_configs(db: Session = Depends(get_user_db)):
     configs = db.query(SystemConfig).all()

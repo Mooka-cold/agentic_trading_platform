@@ -129,7 +129,7 @@ async def run_sentiment_interpreter(background_tasks: BackgroundTasks, req: Opti
 @app.get("/sentiment/aggregate")
 async def get_sentiment_aggregate(symbol: str = DEFAULT_SYMBOL):
     from services.sentiment import sentiment_service
-    fng = await sentiment_service.get_fear_greed_index()
+    fng = await sentiment_service.get_fear_greed_index() or {"value": 50}
     return sentiment_service.aggregate_interpreted_news(symbol, fng)
 
 @app.get("/sentiment/interpretations")
@@ -138,6 +138,11 @@ async def get_sentiment_interpretations(symbol: str = DEFAULT_SYMBOL, limit: int
     safe_limit = max(1, min(limit, 100))
     safe_scope = "all" if str(scope).lower() == "all" else "symbol"
     return sentiment_service.get_recent_interpretations(target_symbol=symbol, limit=safe_limit, scope=safe_scope)
+
+@app.get("/sentiment/dashboard")
+async def get_sentiment_dashboard(symbol: str = DEFAULT_SYMBOL):
+    from services.sentiment import sentiment_service
+    return sentiment_service.get_sentiment_dashboard(target_symbol=symbol)
 
 @app.get("/sentiment/monitor")
 async def get_sentiment_monitor(hours: int = 24):

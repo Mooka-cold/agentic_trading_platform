@@ -86,6 +86,29 @@ export async function fetchLatestSignal(symbol: string): Promise<any | null> {
   return res.json();
 }
 
+export async function fetchSentimentAggregate(symbol: string): Promise<any | null> {
+  const res = await fetch(`${API_BASE}/system/sentiment/aggregate?symbol=${encodeURIComponent(symbol)}`);
+  if (!res.ok) throw new Error('Failed to fetch sentiment aggregate');
+  return res.json();
+}
+
+export async function fetchSentimentInterpretations(symbol: string, limit = 20, scope = 'all'): Promise<any[]> {
+  const params = new URLSearchParams({
+    symbol,
+    limit: String(limit),
+    scope,
+  });
+  const res = await fetch(`${API_BASE}/system/sentiment/interpretations?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch sentiment interpretations');
+  return res.json();
+}
+
+export async function fetchSentimentDashboard(symbol: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/system/sentiment/dashboard?symbol=${encodeURIComponent(symbol)}`);
+  if (!res.ok) throw new Error('Failed to fetch sentiment dashboard');
+  return res.json();
+}
+
 export async function fetchSecondSeries(symbol: string, window = 600): Promise<{ symbol: string; window: number; points: any[] }> {
   const params = new URLSearchParams({
     symbol,

@@ -41,6 +41,7 @@ class LLMService:
         except Exception as e:
             print(f"⚠️ Failed to load config from DB, falling back to ENV: {e}")
 
+        self.model_name = llm_model
         self.llm = ChatOpenAI(
             model=llm_model,
             openai_api_key=openai_api_key,
@@ -104,7 +105,9 @@ class LLMService:
                 "market_data": market_context,
                 "format_instructions": self.parser.get_format_instructions()
             })
+            if isinstance(result, dict):
+                result["model_used"] = self.model_name
             return result
         except Exception as e:
             print(f"LLM Error: {e}")
-            return {"action": "HOLD", "confidence": 0.0, "reasoning": f"Error during analysis: {str(e)}"}
+            return {"action": "HOLD", "confidence": 0.0, "reasoning": f"Error during analysis: {str(e)}", "model_used": self.model_name}
