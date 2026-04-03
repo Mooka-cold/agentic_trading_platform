@@ -32,6 +32,28 @@ export async function fetchSessions(): Promise<any[]> {
   return data.history;
 }
 
+export async function fetchWorkflowRunnerStatus(): Promise<{ is_running: boolean; symbol?: string; session_id?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/workflow/runner/status`);
+  if (!res.ok) throw new Error('Failed to fetch workflow runner status');
+  return res.json();
+}
+
+export async function runWorkflow(symbol: string, session_id?: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/workflow/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol, session_id }),
+  });
+  if (!res.ok) throw new Error('Failed to run workflow');
+  return res.json();
+}
+
+export async function stopWorkflow(): Promise<any> {
+  const res = await fetch(`${API_BASE}/workflow/stop`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to stop workflow');
+  return res.json();
+}
+
 export async function fetchSessionDetail(sessionId: string): Promise<any> {
   const res = await fetch(`${API_BASE}/workflow/session/${sessionId}`);
   if (!res.ok) throw new Error('Failed to fetch session detail');

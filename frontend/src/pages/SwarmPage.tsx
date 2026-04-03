@@ -3,30 +3,30 @@ import { StatusBadge, Panel, ConfidenceBar, agentColorMap } from '@/components/s
 import { cn } from '@/lib/utils';
 import { useState, useMemo, useEffect } from 'react';
 import type { AgentMessage, Session, AgentRole } from '@/types';
-import { Scale, Swords, ChevronDown, ChevronUp, MessageSquare, ArrowRight, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
-import { fetchSessions, fetchSessionDetail } from '@/data/api';
+import { Scale, Swords, ChevronDown, ChevronUp, MessageSquare, ArrowRight, CheckCircle2, XCircle, AlertTriangle, Loader2, Play, Square, RefreshCw } from 'lucide-react';
+import { fetchSessions, fetchSessionDetail, fetchWorkflowRunnerStatus, runWorkflow, stopWorkflow } from '@/data/api';
 
 // ─── Agent seat definitions ────────────────────────────────
 
 const AGENT_SEATS: { role: AgentRole; label: string; shortLabel: string; x: number; y: number; team: string }[] = [
-  { role: 'market', label: 'Market Scanner', shortLabel: 'MKT', x: 10, y: 18, team: 'Data Team' },
-  { role: 'macro', label: 'Macro Analyst', shortLabel: 'MAC', x: 24, y: 18, team: 'Data Team' },
-  { role: 'sentiment', label: 'Sentiment Gauge', shortLabel: 'SNT', x: 10, y: 42, team: 'Data Team' },
-  { role: 'onchain', label: 'Onchain Monitor', shortLabel: 'OCH', x: 24, y: 42, team: 'Data Team' },
-  { role: 'analyst', label: 'Chief Analyst', shortLabel: 'ANA', x: 46, y: 20, team: 'Strategy Team' },
-  { role: 'bull_strategist', label: 'Bull Strategist', shortLabel: 'BULL', x: 40, y: 46, team: 'Strategy Team' },
-  { role: 'bear_strategist', label: 'Bear Strategist', shortLabel: 'BEAR', x: 52, y: 46, team: 'Strategy Team' },
-  { role: 'portfolio_manager', label: 'Portfolio Manager', shortLabel: 'PM', x: 74, y: 22, team: 'Risk Team' },
-  { role: 'reviewer', label: 'Risk Reviewer', shortLabel: 'REV', x: 74, y: 48, team: 'Risk Team' },
-  { role: 'executor', label: 'Trade Executor', shortLabel: 'EXE', x: 90, y: 54, team: 'Execution Team' },
-  { role: 'reflector', label: 'Reflector', shortLabel: 'REF', x: 90, y: 80, team: 'Execution Team' },
+  { role: 'market', label: 'Market Scanner', shortLabel: 'MKT', x: 16, y: 16, team: 'Data Team' },
+  { role: 'macro', label: 'Macro Analyst', shortLabel: 'MAC', x: 34, y: 16, team: 'Data Team' },
+  { role: 'sentiment', label: 'Sentiment Gauge', shortLabel: 'SNT', x: 16, y: 34, team: 'Data Team' },
+  { role: 'onchain', label: 'Onchain Monitor', shortLabel: 'OCH', x: 34, y: 34, team: 'Data Team' },
+  { role: 'analyst', label: 'Chief Analyst', shortLabel: 'ANA', x: 66, y: 18, team: 'Strategy Team' },
+  { role: 'bull_strategist', label: 'Bull Strategist', shortLabel: 'BULL', x: 58, y: 34, team: 'Strategy Team' },
+  { role: 'bear_strategist', label: 'Bear Strategist', shortLabel: 'BEAR', x: 78, y: 34, team: 'Strategy Team' },
+  { role: 'portfolio_manager', label: 'Portfolio Manager', shortLabel: 'PM', x: 18, y: 66, team: 'Risk Team' },
+  { role: 'reviewer', label: 'Risk Reviewer', shortLabel: 'REV', x: 34, y: 82, team: 'Risk Team' },
+  { role: 'executor', label: 'Trade Executor', shortLabel: 'EXE', x: 66, y: 66, team: 'Execution Team' },
+  { role: 'reflector', label: 'Reflector', shortLabel: 'REF', x: 82, y: 82, team: 'Execution Team' },
 ];
 
 const TEAM_ZONES = [
-  { team: 'Data Team', x: 17, y: 30, w: 30, h: 56 },
-  { team: 'Strategy Team', x: 46, y: 34, w: 30, h: 56 },
-  { team: 'Risk Team', x: 74, y: 25, w: 22, h: 30 },
-  { team: 'Execution Team', x: 86, y: 66, w: 24, h: 46 },
+  { team: 'Data Team', x: 25, y: 25, w: 44, h: 42 },
+  { team: 'Strategy Team', x: 75, y: 25, w: 44, h: 42 },
+  { team: 'Risk Team', x: 25, y: 75, w: 44, h: 42 },
+  { team: 'Execution Team', x: 75, y: 75, w: 44, h: 42 },
 ];
 
 // Communication edges: from → to, derived from the pipeline
@@ -378,15 +378,20 @@ function DialogueEdges({ session, selectedAgent }: { session: Session; selectedA
           <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
         </filter>
       </defs>
-      {edges.map(([from, to]) => {
+      {edges.map(([from, to], idx) => {
         const p1 = getAgentPos(from);
         const p2 = getAgentPos(to);
         const isHighlighted = selectedAgent === from || selectedAgent === to;
-        const midX = (p1.x + p2.x) / 2;
-        const midY = (p1.y + p2.y) / 2;
-        const cx = midX + (50 - midX) * 0.3;
-        const cy = midY + (50 - midY) * 0.3;
         const pathId = `edge-${from}-${to}`;
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
+        const laneOffset = ((idx % 5) - 2) * 1.2;
+        const c1x = horizontal ? p1.x + dx * 0.42 : p1.x + laneOffset;
+        const c1y = horizontal ? p1.y + laneOffset : p1.y + dy * 0.42;
+        const c2x = horizontal ? p1.x + dx * 0.58 : p2.x + laneOffset;
+        const c2y = horizontal ? p2.y + laneOffset : p1.y + dy * 0.58;
+        const d = `M ${p1.x} ${p1.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
 
         // Confidence-based speed & color
         const conf = getEdgeConfidence(session, from);
@@ -401,7 +406,7 @@ function DialogueEdges({ session, selectedAgent }: { session: Session; selectedA
             {/* Edge path */}
             <path
               id={pathId}
-              d={`M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`}
+              d={d}
               fill="none"
               stroke={isHighlighted ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))'}
               strokeWidth={isHighlighted ? '0.4' : '0.2'}
@@ -598,6 +603,17 @@ export default function SwarmPage() {
   const [selectedAgent, setSelectedAgent] = useState<AgentRole | null>(null);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [runnerStatus, setRunnerStatus] = useState<{ is_running: boolean; symbol?: string; session_id?: string; error?: string }>({ is_running: false });
+  const [runnerBusy, setRunnerBusy] = useState(false);
+
+  const refreshRunnerStatus = async () => {
+    try {
+      const status = await fetchWorkflowRunnerStatus();
+      setRunnerStatus(status);
+    } catch (err: any) {
+      setRunnerStatus({ is_running: false, error: err?.message || 'status_unavailable' });
+    }
+  };
 
   useEffect(() => {
     async function loadLatest() {
@@ -666,6 +682,39 @@ export default function SwarmPage() {
     loadLatest();
   }, []);
 
+  useEffect(() => {
+    refreshRunnerStatus();
+    const timer = window.setInterval(() => {
+      refreshRunnerStatus();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const handleRun = async () => {
+    const symbol = currentSession?.symbol || 'BTC/USDT';
+    setRunnerBusy(true);
+    try {
+      await runWorkflow(symbol);
+      await refreshRunnerStatus();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setRunnerBusy(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setRunnerBusy(true);
+    try {
+      await stopWorkflow();
+      await refreshRunnerStatus();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setRunnerBusy(false);
+    }
+  };
+
   const displayMessages = useMemo(() => {
     if (!currentSession) return [];
     if (!selectedAgent) return currentSession.messages;
@@ -696,10 +745,48 @@ export default function SwarmPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-primary/30 bg-primary/5">
-            <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-            <span className="text-xs font-mono text-primary">LIVE</span>
+          <div className={cn(
+            'flex items-center gap-1.5 px-2.5 py-1 rounded border',
+            runnerStatus.is_running ? 'border-primary/30 bg-primary/5' : 'border-border bg-secondary/30'
+          )}>
+            <div className={cn(
+              'h-2 w-2 rounded-full',
+              runnerStatus.is_running ? 'bg-primary animate-pulse' : 'bg-muted-foreground/60'
+            )} />
+            <span className={cn(
+              'text-xs font-mono',
+              runnerStatus.is_running ? 'text-primary' : 'text-muted-foreground'
+            )}>
+              {runnerStatus.is_running ? 'RUNNING' : 'IDLE'}
+            </span>
+            {runnerStatus.symbol && (
+              <span className="text-[10px] font-mono text-muted-foreground">· {runnerStatus.symbol}</span>
+            )}
           </div>
+          <button
+            onClick={refreshRunnerStatus}
+            disabled={runnerBusy}
+            className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Refresh
+          </button>
+          <button
+            onClick={handleRun}
+            disabled={runnerBusy || runnerStatus.is_running}
+            className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded border border-success/40 text-success disabled:opacity-50"
+          >
+            <Play className="h-3 w-3" />
+            Run
+          </button>
+          <button
+            onClick={handleStop}
+            disabled={runnerBusy || !runnerStatus.is_running}
+            className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded border border-danger/40 text-danger disabled:opacity-50"
+          >
+            <Square className="h-3 w-3" />
+            Stop
+          </button>
           <StatusBadge status={currentSession.status} />
         </div>
       </div>
@@ -717,7 +804,7 @@ export default function SwarmPage() {
               Show All
             </button>
           }>
-            <div className="relative w-full" style={{ paddingBottom: '68%' }}>
+            <div className="relative w-full" style={{ paddingBottom: '78%' }}>
               {TEAM_ZONES.map((zone) => (
                 <div
                   key={zone.team}
@@ -737,13 +824,6 @@ export default function SwarmPage() {
               ))}
 
               <DialogueEdges session={currentSession} selectedAgent={selectedAgent} />
-
-              <div className="absolute left-[56%] top-[86%] -translate-x-1/2 -translate-y-1/2 z-30">
-                <div className="w-14 h-14 rounded-full border border-border/40 bg-card/80 backdrop-blur flex flex-col items-center justify-center">
-                  <span className="text-[10px] font-mono font-bold text-foreground">{currentSession.symbol}</span>
-                  <span className="text-[7px] font-mono text-muted-foreground">SESSION</span>
-                </div>
-              </div>
 
               {AGENT_SEATS.map((seat) => (
                 <AgentNode

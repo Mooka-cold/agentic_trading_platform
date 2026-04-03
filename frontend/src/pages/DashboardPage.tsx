@@ -582,62 +582,81 @@ export default function DashboardPage() {
                   <p className="text-sm text-foreground leading-relaxed">
                     {interpretation?.summary_cn || '这条新闻尚未完成逐条解读。'}
                   </p>
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Source Context</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                        {interpretation ? languageLabel(interpretation.language) : '待识别语言'}
-                      </span>
-                      <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                        {interpretation ? sourceTierLabel(interpretation.source_tier) : '待识别来源层级'}
-                      </span>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Source Context</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                          {interpretation ? languageLabel(interpretation.language) : '待识别语言'}
+                        </span>
+                        <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                          {interpretation ? sourceTierLabel(interpretation.source_tier) : '待识别来源层级'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(interpretation?.cross_market_impacts || []).slice(0, 2).map((impact, idx) => (
+                          <span
+                            key={`${impact.market}-${idx}`}
+                            className={cn(
+                              'rounded border px-2 py-0.5 text-[10px] font-mono',
+                              impact.direction === 'bullish'
+                                ? 'border-success/30 bg-success/10 text-success'
+                                : impact.direction === 'bearish'
+                                  ? 'border-danger/30 bg-danger/10 text-danger'
+                                  : 'border-border bg-secondary/20 text-muted-foreground',
+                            )}
+                          >
+                            {MARKET_LABELS[impact.market] || impact.market} {impact.direction === 'bullish' ? '利好' : impact.direction === 'bearish' ? '利空' : '中性'}
+                          </span>
+                        ))}
+                        {!!(interpretation?.cross_market_impacts || []).length && (interpretation?.cross_market_impacts || []).length > 2 && (
+                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                            +{(interpretation?.cross_market_impacts || []).length - 2}
+                          </span>
+                        )}
+                        {!(interpretation?.cross_market_impacts || []).length && (
+                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                            暂无跨市场归因
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Noise Flags</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(interpretation?.noise_flags || []).slice(0, 2).map((flag) => (
+                          <span key={flag} className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                            {noiseFlagLabel(flag)}
+                          </span>
+                        ))}
+                        {!!(interpretation?.noise_flags || []).length && (interpretation?.noise_flags || []).length > 2 && (
+                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                            +{(interpretation?.noise_flags || []).length - 2}
+                          </span>
+                        )}
+                        {!(interpretation?.noise_flags || []).length && (
+                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                            无明显噪声
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(interpretation?.cross_market_impacts || []).slice(0, 3).map((impact, idx) => (
-                      <span
-                        key={`${impact.market}-${idx}`}
-                        className={cn(
-                          'rounded border px-2 py-0.5 text-[10px] font-mono',
-                          impact.direction === 'bullish'
-                            ? 'border-success/30 bg-success/10 text-success'
-                            : impact.direction === 'bearish'
-                              ? 'border-danger/30 bg-danger/10 text-danger'
-                              : 'border-border bg-secondary/20 text-muted-foreground',
-                        )}
-                      >
-                        {MARKET_LABELS[impact.market] || impact.market} {impact.direction === 'bullish' ? '利好' : impact.direction === 'bearish' ? '利空' : '中性'}
-                      </span>
-                    ))}
-                    {!(interpretation?.cross_market_impacts || []).length && (
-                      <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                        暂无跨市场归因
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Evidence</p>
-                    {(interpretation?.evidence_quotes || []).slice(0, 2).map((quote, idx) => (
-                      <p key={idx} className="rounded border border-border bg-secondary/10 px-2 py-1 text-xs text-muted-foreground line-clamp-2">
+                  <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Evidence</p>
+                      {!!(interpretation?.evidence_quotes || []).length && (interpretation?.evidence_quotes || []).length > 1 && (
+                        <span className="text-[10px] font-mono text-muted-foreground">+{(interpretation?.evidence_quotes || []).length - 1} 条</span>
+                      )}
+                    </div>
+                    {(interpretation?.evidence_quotes || []).slice(0, 1).map((quote, idx) => (
+                      <p key={idx} className="rounded border border-border bg-background/60 px-2 py-1 text-xs text-muted-foreground line-clamp-2">
                         “{quote}”
                       </p>
                     ))}
                     {!(interpretation?.evidence_quotes || []).length && (
                       <p className="text-xs text-muted-foreground">暂无证据引用</p>
                     )}
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Noise Flags</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {(interpretation?.noise_flags || []).slice(0, 3).map((flag) => (
-                        <span key={flag} className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                          {noiseFlagLabel(flag)}
-                        </span>
-                      ))}
-                      {!(interpretation?.noise_flags || []).length && (
-                        <span className="text-xs text-muted-foreground">无明显噪声标记</span>
-                      )}
-                    </div>
                   </div>
                 </div>
               </div>
