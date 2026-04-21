@@ -23,7 +23,7 @@
 
 ```bash
 cd /Users/huangyong/Documents/Qell/ai_trading
-docker compose up -d
+docker compose up -d --build
 ```
 
 默认访问：
@@ -111,6 +111,17 @@ cd ai_engine
 python -m py_compile agents/portfolio_manager.py
 ```
 
+### 4.3 交易正确性 Harness
+
+```bash
+cd /Users/huangyong/Documents/Qell/ai_trading
+make harness-smoke
+```
+
+说明：
+
+- `harness-smoke` 为发布前最小正确性闸门，重点覆盖余额契约、开仓新鲜度拒单、幂等、K线固化与指标可用性。
+
 ## 5. 常见故障与处理
 
 ### 5.1 前端代理请求失败
@@ -121,7 +132,7 @@ python -m py_compile agents/portfolio_manager.py
 ### 5.2 ESLint 9 配置错误
 
 - 现象：提示缺少 `eslint.config.*`。
-- 处理：确认 `frontend/eslint.config.mjs` 存在并可被加载。
+- 处理：确认 `frontend/eslint.config.js` 存在并可被加载。
 
 ### 5.3 前端构建失败
 
@@ -165,4 +176,5 @@ npm run build
 - 工作流会话是否持续推进（无卡死轮次）。
 - 风控拒绝是否带 reject_code 与 fix_suggestions。
 - 前端历史页是否可查看完整会话日志与 artifact。
+- `make harness-smoke` 是否 100% 通过。
 - 依赖审计是否维持 `critical=0`。

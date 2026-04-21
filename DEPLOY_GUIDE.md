@@ -17,7 +17,7 @@ SSH 登录到你的新服务器：
 ssh root@<YOUR_SERVER_IP>
 ```
 
-执行以下脚本安装 Docker & Docker Compose：
+执行以下脚本安装 Docker（含 `docker compose` 插件）：
 ```bash
 # Update system
 apt update && apt upgrade -y
@@ -64,7 +64,11 @@ cd ~/ai_trading
     *   你可以在仓库的 **Actions** 标签页查看进度。
 3.  **验证部署**:
     *   当 Workflow 显示 ✅ Success 后。
-    *   SSH 登录服务器，运行 `docker ps`，应该能看到 `ai_trading-backend`, `ai_trading-ai-engine` 等容器正在运行。
+    *   SSH 登录服务器，运行 `docker compose -f docker-compose.prod.yml ps`，应看到 `backend / ai-engine / scheduler / crawler / market-streamer` 等服务为 `Up`。
+    *   健康检查建议：
+        - `curl http://<YOUR_SERVER_IP>:3201/health`
+        - `curl http://<YOUR_SERVER_IP>:3202/health`
+        - `curl http://<YOUR_SERVER_IP>:3207/health`
 
 ## 4. 部署模式说明
 
@@ -99,5 +103,6 @@ BACKEND_URL=http://<YOUR_SERVER_IP>:3201 npm run dev
 
 *   **端口不通？**
     *   检查云服务商（AWS Security Group / DigitalOcean Firewall）是否放行了 `3201`, `3202` 端口。
+    *   若需要采集服务健康检查，额外放行 `3207`。
 *   **数据库连不上？**
     *   默认配置下数据库端口 (`5432`) 未暴露到公网，这是为了安全。如果你需要本地 DBeaver 连接，请使用 SSH Tunnel，或者临时在 `docker-compose.prod.yml` 中解开端口映射注释。
