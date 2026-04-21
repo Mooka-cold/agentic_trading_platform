@@ -1,0 +1,20 @@
+{
+  "smoke": [
+    "trd_001_paper_account_contract.json",
+    "trd_002_staleness_gate_rejects_open.json",
+    "trd_003_idempotency_replay.json",
+    "trd_004_rollup_solidify_api.json",
+    "trd_005_kline_indicator_availability.json"
+  ],
+  "regression": [
+    "trd_001_paper_account_contract.json",
+    "trd_002_staleness_gate_rejects_open.json",
+    "trd_003_idempotency_replay.json",
+    "trd_004_rollup_solidify_api.json",
+    "trd_005_kline_indicator_availability.json"
+  ],
+  "replay": [
+    "trd_004_rollup_solidify_api.json",
+    "trd_005_kline_indicator_availability.json"
+  ]
+}

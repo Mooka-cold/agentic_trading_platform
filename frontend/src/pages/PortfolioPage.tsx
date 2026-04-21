@@ -1,5 +1,6 @@
 import { Panel, StatusBadge } from '@/components/shared/StatusBadge';
 import { cn } from '@/lib/utils';
+import { formatDateTimeCN } from '@/lib/time';
 import { useState, useEffect } from 'react';
 import { fetchPositions, fetchOrders, fetchPaperAccountSnapshot } from '@/data/api';
 import { Loader2 } from 'lucide-react';
@@ -106,7 +107,7 @@ export default function PortfolioPage() {
                     <div>Type: {o.type}</div>
                     <div className="text-right">Qty: {o.quantity}</div>
                     <div>Price: ${o.price?.toLocaleString() || o.executed_price?.toLocaleString()}</div>
-                    <div className="text-right">{new Date(o.created_at).toLocaleString()}</div>
+                    <div className="text-right">{formatDateTimeCN(o.created_at)}</div>
                   </div>
                   {o.pnl !== null && o.pnl !== undefined && (
                     <div className="mt-2 pt-2 border-t border-border/30 flex justify-between">

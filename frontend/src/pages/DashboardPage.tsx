@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Panel, MetricCard, StatusBadge } from '@/components/shared/StatusBadge';
-import { fetchMarketKline, fetchMarketTicker, fetchNews, fetchSecondSeries, fetchSentimentDashboard, fetchSentimentInterpretations } from '@/data/api';
+import { fetchMarketKline, fetchMarketTicker, fetchNews, fetchSecondSeries, fetchSentimentDashboard, fetchSentimentInterpretations, solidifyMarketRollups } from '@/data/api';
 import { Activity, Newspaper, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,6 +13,7 @@ import {
   YAxis,
 } from 'recharts';
 import { cn } from '@/lib/utils';
+import { formatDateTimeCN, formatMinuteTimeCN, formatTimeCN } from '@/lib/time';
 
 type KlineItem = {
   time: number;
@@ -152,12 +153,14 @@ export default function DashboardPage() {
     ]);
 
     const failedModules: string[] = [];
+    let klineFailureType: 'request_failed' | 'empty' | null = null;
 
     if (klineResult.status === 'fulfilled' && (klineResult.value || []).length > 0) {
       setKline(klineResult.value || []);
     } else {
       setKline([]);
       failedModules.push('K线');
+      klineFailureType = klineResult.status === 'rejected' ? 'request_failed' : 'empty';
     }
 
     if (tickerResult.status === 'fulfilled') {
@@ -201,11 +204,28 @@ export default function DashboardPage() {
       setSecondSeries([]);
     }
 
-    if (failedModules.length) {
-      setError(`部分数据加载失败：${failedModules.join('、')}`);
+    const notices: string[] = [];
+    const nonKlineFailures = failedModules.filter((m) => m !== 'K线');
+    if (nonKlineFailures.length) {
+      notices.push(`部分数据加载失败：${nonKlineFailures.join('、')}`);
     }
 
+    let recoveredKline = false;
     if (klineResult.status !== 'fulfilled' || (klineResult.value || []).length === 0) {
+      // First try self-healing: trigger rollup solidification then refetch once.
+      try {
+        await solidifyMarketRollups(symbol, 600);
+        const retried = await fetchMarketKline(symbol, interval, 120);
+        if ((retried || []).length > 0) {
+          setKline(retried);
+          setUsingSecondFallback(false);
+          notices.push('K线已自动修复（已完成历史固化）');
+          recoveredKline = true;
+        }
+      } catch {}
+    }
+
+    if (!recoveredKline && (klineResult.status !== 'fulfilled' || (klineResult.value || []).length === 0)) {
       try {
         const points = secondSeriesPoints.length
           ? secondSeriesPoints
@@ -227,10 +247,22 @@ export default function DashboardPage() {
           });
           setKline(fallbackKline);
           setUsingSecondFallback(true);
-          setError('K线历史数据暂缺，已回退为秒级价格曲线');
+          notices.push(
+            klineFailureType === 'request_failed'
+              ? 'K线接口请求失败，已回退为秒级价格曲线'
+              : 'K线数据为空，已回退为秒级价格曲线'
+          );
+        } else if (klineFailureType) {
+          notices.push(
+            klineFailureType === 'request_failed'
+              ? 'K线接口请求失败，且秒级价格曲线也不可用'
+              : 'K线数据为空，且秒级价格曲线也不可用'
+          );
         }
       } catch {}
     }
+
+    setError(notices.length ? notices.join('；') : null);
 
     setLoading(false);
   };
@@ -251,7 +283,7 @@ export default function DashboardPage() {
     () =>
       kline.map((item) => ({
         ...item,
-        t: new Date(item.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        t: formatMinuteTimeCN(item.time * 1000),
       })),
     [kline],
   );
@@ -259,7 +291,7 @@ export default function DashboardPage() {
     () =>
       secondSeries.map((item) => ({
         ...item,
-        t: new Date(item.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        t: formatTimeCN(item.time * 1000),
       })),
     [secondSeries],
   );
@@ -292,7 +324,7 @@ export default function DashboardPage() {
       .sort((a, b) => a.time - b.time)
       .map((item) => ({
         ...item,
-        t: new Date(item.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        t: formatTimeCN(item.time * 1000),
       }));
   }, [kline, secondSeries]);
   const sentimentChartData = useMemo(
@@ -557,7 +589,7 @@ export default function DashboardPage() {
                   </div>
                   <p className="text-xs text-muted-foreground line-clamp-2">{item.summary || '无摘要'}</p>
                   <p className="text-[11px] text-muted-foreground">
-                    {item.source} · {new Date(item.published_at).toLocaleString()}
+                    {item.source} · {formatDateTimeCN(item.published_at)}
                   </p>
                 </a>
                 <div className="space-y-2 border-t border-border p-3 md:border-l md:border-t-0">

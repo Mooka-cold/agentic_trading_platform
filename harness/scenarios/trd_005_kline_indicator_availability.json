@@ -1,0 +1,56 @@
+{
+  "id": "TRD-005",
+  "title": "Kline endpoint returns usable candles and indicators",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "solidify before kline read",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/market/rollup/solidify",
+        "params": {
+          "symbols": "BTC/USDT",
+          "limit_hint": 500
+        }
+      },
+      "assertions": [
+        {
+          "name": "solidify returns 200",
+          "expr": "status == 200"
+        }
+      ]
+    },
+    {
+      "name": "fetch kline with indicators",
+      "request": {
+        "service": "backend",
+        "method": "GET",
+        "path": "/api/v1/market/kline",
+        "params": {
+          "symbol": "BTC/USDT",
+          "interval": "1m",
+          "limit": 120
+        }
+      },
+      "assertions": [
+        {
+          "name": "status is 200",
+          "expr": "status == 200"
+        },
+        {
+          "name": "body is non-empty list",
+          "expr": "isinstance(body, list) and len(body) > 0"
+        },
+        {
+          "name": "OHLC relationship is valid",
+          "expr": "isinstance(body, list) and all((c.get('high') is None or c.get('low') is None or c.get('open') is None or c.get('close') is None) or (c['high'] >= max(c['open'], c['close']) and c['low'] <= min(c['open'], c['close'])) for c in body)"
+        },
+        {
+          "name": "at least one indicator field has values",
+          "expr": "isinstance(body, list) and any(any(c.get(k) is not None for k in ['rsi', 'macd', 'ma20', 'sma7', 'ema7', 'bb_upper', 'atr']) for c in body)"
+        }
+      ]
+    }
+  ]
+}

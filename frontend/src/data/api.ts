@@ -140,3 +140,15 @@ export async function fetchSecondSeries(symbol: string, window = 600): Promise<{
   if (!res.ok) throw new Error('Failed to fetch second series');
   return res.json();
 }
+
+export async function solidifyMarketRollups(symbol: string, limitHint = 600): Promise<any> {
+  const params = new URLSearchParams({
+    symbols: symbol,
+    limit_hint: String(limitHint),
+  });
+  const res = await fetch(`${API_BASE}/market/rollup/solidify?${params.toString()}`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error('Failed to solidify market rollups');
+  return res.json();
+}

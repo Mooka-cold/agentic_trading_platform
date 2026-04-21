@@ -1,6 +1,7 @@
 import { mockSessions, mockAgents } from '@/data/mock';
 import { StatusBadge, Panel, ConfidenceBar, agentColorMap } from '@/components/shared/StatusBadge';
 import { cn } from '@/lib/utils';
+import { formatTimeCN } from '@/lib/time';
 import { useState, useMemo, useEffect } from 'react';
 import type { AgentMessage, Session, AgentRole } from '@/types';
 import { Scale, Swords, ChevronDown, ChevronUp, MessageSquare, ArrowRight, CheckCircle2, XCircle, AlertTriangle, Loader2, Play, Square, RefreshCw } from 'lucide-react';
@@ -336,7 +337,7 @@ function AgentNode({ role, label, shortLabel, session, isSelected, onClick }: {
         <div className="absolute top-full mt-3 w-56 p-2.5 rounded border border-border bg-popover text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl">
           <div className="flex items-center gap-1 mb-1">
             <StatusBadge status={lastMsg.messageType} className="text-[8px] px-1 py-0" />
-            <span className="text-muted-foreground">{new Date(lastMsg.timestamp).toLocaleTimeString()}</span>
+            <span className="text-muted-foreground">{formatTimeCN(lastMsg.timestamp)}</span>
           </div>
           <p className="text-foreground leading-relaxed line-clamp-4">{lastMsg.content}</p>
         </div>
@@ -478,7 +479,7 @@ function AgentDecisionCard({ msg, isLatest }: { msg: AgentMessage; isLatest: boo
         </div>
         <div className="flex items-center gap-1.5">
           {msg.confidence !== undefined && <ConfidenceBar value={msg.confidence} className="w-14" />}
-          <span className="text-muted-foreground text-[9px]">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+          <span className="text-muted-foreground text-[9px]">{formatTimeCN(msg.timestamp)}</span>
         </div>
       </div>
       <p className={cn('text-foreground leading-relaxed', !expanded && 'line-clamp-2')}>{msg.content}</p>
@@ -651,6 +652,9 @@ export default function SwarmPage() {
             startTime: sess.start_time,
             endTime: sess.end_time || sess.start_time,
             trade: detail.trade_plan ? {
+              id: `trade-${sess.id}`,
+              sessionId: sess.id,
+              symbol: sess.symbol,
               action: detail.trade_plan.action,
               orderType: 'MARKET',
               triggerCondition: 'N/A',

@@ -1,5 +1,5 @@
 fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
+uvicorn>=0.27.0
 langchain>=0.1.0
 langchain-openai>=0.0.5
 chromadb>=0.4.22
@@ -13,3 +13,5 @@ psycopg2-binary>=2.9.9
 redis>=5.0.0
 sse-starlette>=2.0.0
 apscheduler>=3.10.0
+
+grpcio==1.67.1

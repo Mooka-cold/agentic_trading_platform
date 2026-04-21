@@ -1,0 +1,29 @@
+{
+  "id": "TRD-001",
+  "title": "Paper account contract stays valid",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "get paper account",
+      "request": {
+        "service": "backend",
+        "method": "GET",
+        "path": "/api/v1/trade/paper/account"
+      },
+      "assertions": [
+        {
+          "name": "status is 200",
+          "expr": "status == 200"
+        },
+        {
+          "name": "required fields exist",
+          "expr": "isinstance(body, dict) and all(k in body for k in ['balance', 'equity', 'currency', 'is_locked'])"
+        },
+        {
+          "name": "balance and equity are non-negative numbers",
+          "expr": "isinstance(body.get('balance'), (int, float)) and isinstance(body.get('equity'), (int, float)) and body.get('balance') >= 0 and body.get('equity') >= 0"
+        }
+      ]
+    }
+  ]
+}

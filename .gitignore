@@ -19,6 +19,7 @@ env/
 .idea/
 *.swp
 .DS_Store
+.trae/
 
 # Docker
 docker-compose.override.yml
@@ -43,3 +44,7 @@ frontend/.swc/
 tests/
 */tests/
 test_*.py
+
+# Harness
+harness/reports/*
+!harness/reports/.gitkeep

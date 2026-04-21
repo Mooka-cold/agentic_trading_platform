@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { fetchPaperAccount, fetchSessions } from '@/data/api';
+import { formatTimeCN } from '@/lib/time';
 
 export default function OverviewPage() {
   const [kpis, setKpis] = useState(mockKPIs);
@@ -119,7 +120,7 @@ export default function OverviewPage() {
                     <p className="font-mono text-muted-foreground mt-0.5">{alert.detail}</p>
                     <p className="font-mono text-muted-foreground mt-1 flex items-center gap-1">
                       <Clock className="h-3 w-3" />
-                      {new Date(alert.timestamp).toLocaleTimeString()}
+                      {formatTimeCN(alert.timestamp)}
                     </p>
                   </div>
                 </div>
@@ -153,7 +154,7 @@ export default function OverviewPage() {
                   <td className={cn('py-2 pr-4 text-right', sess.trade?.pnl && sess.trade.pnl > 0 ? 'text-success' : sess.trade?.pnl && sess.trade.pnl < 0 ? 'text-danger' : 'text-muted-foreground')}>
                     {sess.trade?.pnl ? `$${sess.trade.pnl.toFixed(2)}` : '—'}
                   </td>
-                  <td className="py-2 text-muted-foreground">{new Date(sess.startTime).toLocaleTimeString()}</td>
+                  <td className="py-2 text-muted-foreground">{formatTimeCN(sess.startTime)}</td>
                 </tr>
               ))}
             </tbody>

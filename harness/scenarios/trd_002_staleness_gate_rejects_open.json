@@ -1,0 +1,38 @@
+{
+  "id": "TRD-002",
+  "title": "Staleness gate rejects open order when market price is unavailable",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "submit order on synthetic symbol",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/trade/execute",
+        "json": {
+          "action": "BUY",
+          "symbol": "HARNESS/USDT",
+          "quantity": 1.0,
+          "price": 1.0,
+          "confidence": 0.9,
+          "order_type": "MARKET",
+          "session_id": "harness-trd-002"
+        }
+      },
+      "assertions": [
+        {
+          "name": "status code is 200",
+          "expr": "status == 200"
+        },
+        {
+          "name": "order rejected",
+          "expr": "isinstance(body, dict) and body.get('status') == 'REJECTED'"
+        },
+        {
+          "name": "mode is rejected",
+          "expr": "isinstance(body, dict) and body.get('mode') == 'REJECTED'"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "TRD-004",
+  "title": "Rollup solidify API works and returns structured stats",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "trigger rollup solidify",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/market/rollup/solidify",
+        "params": {
+          "symbols": "BTC/USDT",
+          "limit_hint": 300
+        }
+      },
+      "assertions": [
+        {
+          "name": "status code is 200",
+          "expr": "status == 200"
+        },
+        {
+          "name": "response has stats and total_inserted",
+          "expr": "isinstance(body, dict) and isinstance(body.get('stats'), dict) and isinstance(body.get('total_inserted'), int)"
+        },
+        {
+          "name": "total_inserted is non-negative",
+          "expr": "isinstance(body, dict) and body.get('total_inserted', -1) >= 0"
+        }
+      ]
+    }
+  ]
+}

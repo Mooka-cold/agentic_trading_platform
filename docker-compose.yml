@@ -8,6 +8,8 @@ services:
       POSTGRES_USER: user_admin
       POSTGRES_PASSWORD: user_password
       POSTGRES_DB: ai_trading_users
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
     volumes:
       - postgres_user_data:/var/lib/postgresql/data
     ports:
@@ -24,6 +26,8 @@ services:
       POSTGRES_USER: market_admin
       POSTGRES_PASSWORD: market_password
       POSTGRES_DB: ai_trading_market
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
     volumes:
       - timescale_market_data:/var/lib/postgresql/data
       - ./docker/timescaledb/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -35,6 +39,8 @@ services:
   # Vector Database for News/RAG (ChromaDB)
   chromadb:
     image: chromadb/chroma:latest
+    environment:
+      - TZ=Asia/Shanghai
     ports:
       - "3203:8000"
     volumes:
@@ -46,6 +52,8 @@ services:
   redis:
     image: redis:alpine
     restart: always
+    environment:
+      - TZ=Asia/Shanghai
     ports:
       - "3204:6379"
     command: redis-server --appendonly yes
@@ -70,6 +78,7 @@ services:
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
       - NEWS_API_KEY=${NEWS_API_KEY}
       - PYTHONPATH=/app:/app/shared
+      - TZ=Asia/Shanghai
     depends_on:
       - db-users
       - db-market
@@ -105,6 +114,7 @@ services:
       - OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
       - LLM_MODEL=qwen-max
       - PYTHONPATH=/app:/app/shared
+      - TZ=Asia/Shanghai
     depends_on:
       - db-users
       - db-market
@@ -137,6 +147,7 @@ services:
       - SCHEDULE_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,DOGE/USDT,TRX/USDT
       - SCHEDULE_TIMEFRAMES=1m,1h,1d
       - PYTHONPATH=/app:/app/shared
+      - TZ=Asia/Shanghai
     depends_on:
       - db-users
       - db-market
@@ -168,6 +179,7 @@ services:
       - DATABASE_MARKET_URL=postgresql://market_admin:market_password@db-market:5432/ai_trading_market
       - REDIS_URL=redis://redis:6379/0
       - PYTHONPATH=/app:/app/shared
+      - TZ=Asia/Shanghai
     depends_on:
       - backend
       - ai-engine
@@ -200,6 +212,7 @@ services:
       - MARKET_STREAM_SYMBOLS=BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,DOGE/USDT,TRX/USDT
       - MARKET_STREAM_TIMEFRAME=1m
       - PYTHONPATH=/app:/app/shared
+      - TZ=Asia/Shanghai
     depends_on:
       - db-market
       - redis
@@ -219,6 +232,7 @@ services:
       - /app/node_modules
     environment:
       - BACKEND_URL=http://backend:8000
+      - TZ=Asia/Shanghai
     networks:
       - ai_trading_net
 

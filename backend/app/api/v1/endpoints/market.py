@@ -140,6 +140,81 @@ def _backfill_from_second_klines(db: Session, symbol: str, interval: str, limit:
     src_map = {"1m": "1s", "5m": "1m", "15m": "5m", "1h": "15m"}
     return _rollup_symbol_interval(db, symbol, src_map[interval], interval, limit_hint=max(limit, 100))
 
+def _compute_indicators_for_rows(rows_asc: List[Any]) -> pd.DataFrame:
+    """
+    Compute indicators on the fly from OHLCV rows (chronological order).
+    Used as a fallback when DB-stored indicator columns are NULL.
+    """
+    if not rows_asc:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(
+        [
+            {
+                "time": row.time,
+                "open": float(row.open),
+                "high": float(row.high),
+                "low": float(row.low),
+                "close": float(row.close),
+                "volume": float(row.volume or 0.0),
+            }
+            for row in rows_asc
+        ]
+    )
+
+    if df.empty:
+        return df
+
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+
+    # RSI(14)
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+    avg_gain = gain.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    rs = avg_gain / avg_loss.replace(0.0, pd.NA)
+    df["rsi"] = 100.0 - (100.0 / (1.0 + rs))
+
+    # MACD(12,26,9)
+    ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
+    ema26 = close.ewm(span=26, adjust=False, min_periods=26).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False, min_periods=9).mean()
+    df["macd"] = macd
+    df["macd_signal"] = signal
+    df["macd_hist"] = macd - signal
+
+    # SMA / EMA
+    df["ma20"] = close.rolling(window=20, min_periods=20).mean()
+    df["ma50"] = close.rolling(window=50, min_periods=50).mean()
+    df["sma_7"] = close.rolling(window=7, min_periods=7).mean()
+    df["sma_25"] = close.rolling(window=25, min_periods=25).mean()
+    df["ema_7"] = close.ewm(span=7, adjust=False, min_periods=7).mean()
+    df["ema_25"] = close.ewm(span=25, adjust=False, min_periods=25).mean()
+
+    # Bollinger Bands(20,2)
+    std20 = close.rolling(window=20, min_periods=20).std(ddof=0)
+    df["bb_middle"] = df["ma20"]
+    df["bb_upper"] = df["bb_middle"] + 2 * std20
+    df["bb_lower"] = df["bb_middle"] - 2 * std20
+
+    # ATR(14)
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    df["atr_14"] = tr.rolling(window=14, min_periods=14).mean()
+
+    return df
+
 @router.get("/symbols")
 def get_market_symbols() -> Dict[str, Any]:
     symbols = _active_symbols()
@@ -334,15 +409,76 @@ def get_kline_data(
         if not result:
             return []
 
+    rows_asc = list(reversed(result))
+    computed_df = _compute_indicators_for_rows(rows_asc)
+    computed_by_ts = {
+        int(pd.Timestamp(t).timestamp()): row
+        for t, row in zip(computed_df["time"], computed_df.to_dict(orient="records"))
+    } if not computed_df.empty else {}
+
     data = []
 
     # Helper to safely get float or None
     def safe_val(val):
-        return float(val) if val is not None else None
+        if val is None or pd.isna(val):
+            return None
+        return float(val)
 
-    # Reverse to return chronological order (oldest first) as chart libraries usually expect
-    for row in reversed(result):
+    indicator_update_payload: List[Dict[str, Any]] = []
+
+    # Return chronological order (oldest first) as chart libraries usually expect
+    for row in rows_asc:
         ts = int(row.time.timestamp())
+        calc = computed_by_ts.get(ts, {})
+        rsi_val = safe_val(row.rsi) if row.rsi is not None else safe_val(calc.get("rsi"))
+        macd_val = safe_val(row.macd) if row.macd is not None else safe_val(calc.get("macd"))
+        macd_signal_val = safe_val(row.macd_signal) if row.macd_signal is not None else safe_val(calc.get("macd_signal"))
+        macd_hist_val = safe_val(row.macd_hist) if row.macd_hist is not None else safe_val(calc.get("macd_hist"))
+        ma20_val = safe_val(row.bb_middle) if row.bb_middle is not None else safe_val(calc.get("ma20"))
+        ma50_val = safe_val(calc.get("ma50"))
+        sma7_val = safe_val(row.sma_7) if row.sma_7 is not None else safe_val(calc.get("sma_7"))
+        sma25_val = safe_val(row.sma_25) if row.sma_25 is not None else safe_val(calc.get("sma_25"))
+        ema7_val = safe_val(row.ema_7) if row.ema_7 is not None else safe_val(calc.get("ema_7"))
+        ema25_val = safe_val(row.ema_25) if row.ema_25 is not None else safe_val(calc.get("ema_25"))
+        bb_upper_val = safe_val(row.bb_upper) if row.bb_upper is not None else safe_val(calc.get("bb_upper"))
+        bb_middle_val = safe_val(row.bb_middle) if row.bb_middle is not None else safe_val(calc.get("bb_middle"))
+        bb_lower_val = safe_val(row.bb_lower) if row.bb_lower is not None else safe_val(calc.get("bb_lower"))
+        atr14_val = safe_val(row.atr_14) if row.atr_14 is not None else safe_val(calc.get("atr_14"))
+
+        # Persist computed indicators back to DB when source row has NULLs.
+        if (
+            (row.rsi is None and rsi_val is not None)
+            or (row.macd is None and macd_val is not None)
+            or (row.macd_signal is None and macd_signal_val is not None)
+            or (row.macd_hist is None and macd_hist_val is not None)
+            or (row.sma_7 is None and sma7_val is not None)
+            or (row.sma_25 is None and sma25_val is not None)
+            or (row.ema_7 is None and ema7_val is not None)
+            or (row.ema_25 is None and ema25_val is not None)
+            or (row.bb_upper is None and bb_upper_val is not None)
+            or (row.bb_middle is None and bb_middle_val is not None)
+            or (row.bb_lower is None and bb_lower_val is not None)
+            or (row.atr_14 is None and atr14_val is not None)
+        ):
+            indicator_update_payload.append(
+                {
+                    "time": row.time,
+                    "symbol": symbol,
+                    "interval": interval,
+                    "rsi_14": rsi_val,
+                    "macd": macd_val,
+                    "macd_signal": macd_signal_val,
+                    "macd_hist": macd_hist_val,
+                    "sma_7": sma7_val,
+                    "sma_25": sma25_val,
+                    "ema_7": ema7_val,
+                    "ema_25": ema25_val,
+                    "bb_upper": bb_upper_val,
+                    "bb_middle": bb_middle_val,
+                    "bb_lower": bb_lower_val,
+                    "atr_14": atr14_val,
+                }
+            )
 
         item = {
             "time": ts,
@@ -353,42 +489,67 @@ def get_kline_data(
             "volume": float(row.volume),
             
             # Indicators
-            "rsi": safe_val(row.rsi),
-            "macd": safe_val(row.macd),
-            "macd_signal": safe_val(row.macd_signal),
-            "macd_hist": safe_val(row.macd_hist),
+            "rsi": rsi_val,
+            "macd": macd_val,
+            "macd_signal": macd_signal_val,
+            "macd_hist": macd_hist_val,
             
             # MA20/MA50 are not explicitly in DB (streamer calcs BB_Middle which is SMA20)
-            "ma20": safe_val(row.bb_middle), # BB Middle is SMA 20
-            "ma50": None, # Not in DB
+            "ma20": ma20_val, # BB Middle is SMA20; fallback to computed MA20
+            "ma50": ma50_val,
             
-            "sma_7": safe_val(row.sma_7),
-            "sma_25": safe_val(row.sma_25), # Added to query just in case, but check schema
-            "ema_7": safe_val(row.ema_7),   # Added to query
-            "ema_25": safe_val(row.ema_25),
+            "sma_7": sma7_val,
+            "sma_25": sma25_val,
+            "ema_7": ema7_val,
+            "ema_25": ema25_val,
             
-            "bb_upper": safe_val(row.bb_upper),
-            "bb_middle": safe_val(row.bb_middle),
-            "bb_lower": safe_val(row.bb_lower),
-            "atr_14": safe_val(row.atr_14),
+            "bb_upper": bb_upper_val,
+            "bb_middle": bb_middle_val,
+            "bb_lower": bb_lower_val,
+            "atr_14": atr14_val,
             
             # Calc times - since we fetch from DB, the calc time is the candle time
             # IF the value exists.
-            "rsi_calc_time": ts if row.rsi is not None else None,
-            "macd_calc_time": ts if row.macd is not None else None,
-            "macd_signal_calc_time": ts if row.macd_signal is not None else None,
-            "macd_hist_calc_time": ts if row.macd_hist is not None else None,
-            "ma20_calc_time": ts if row.bb_middle is not None else None,
-            "ma50_calc_time": None,
-            "sma_7_calc_time": ts if row.sma_7 is not None else None,
-            "sma_25_calc_time": ts if row.sma_25 is not None else None,
-            "ema_7_calc_time": ts if row.ema_7 is not None else None,
-            "ema_25_calc_time": ts if row.ema_25 is not None else None,
-            "bb_upper_calc_time": ts if row.bb_upper is not None else None,
-            "bb_middle_calc_time": ts if row.bb_middle is not None else None,
-            "bb_lower_calc_time": ts if row.bb_lower is not None else None,
-            "atr_14_calc_time": ts if row.atr_14 is not None else None
+            "rsi_calc_time": ts if rsi_val is not None else None,
+            "macd_calc_time": ts if macd_val is not None else None,
+            "macd_signal_calc_time": ts if macd_signal_val is not None else None,
+            "macd_hist_calc_time": ts if macd_hist_val is not None else None,
+            "ma20_calc_time": ts if ma20_val is not None else None,
+            "ma50_calc_time": ts if ma50_val is not None else None,
+            "sma_7_calc_time": ts if sma7_val is not None else None,
+            "sma_25_calc_time": ts if sma25_val is not None else None,
+            "ema_7_calc_time": ts if ema7_val is not None else None,
+            "ema_25_calc_time": ts if ema25_val is not None else None,
+            "bb_upper_calc_time": ts if bb_upper_val is not None else None,
+            "bb_middle_calc_time": ts if bb_middle_val is not None else None,
+            "bb_lower_calc_time": ts if bb_lower_val is not None else None,
+            "atr_14_calc_time": ts if atr14_val is not None else None
         }
         data.append(item)
-        
+
+    if indicator_update_payload:
+        db.execute(
+            text(
+                """
+                UPDATE market_klines
+                SET
+                    rsi_14 = COALESCE(rsi_14, :rsi_14),
+                    macd = COALESCE(macd, :macd),
+                    macd_signal = COALESCE(macd_signal, :macd_signal),
+                    macd_hist = COALESCE(macd_hist, :macd_hist),
+                    sma_7 = COALESCE(sma_7, :sma_7),
+                    sma_25 = COALESCE(sma_25, :sma_25),
+                    ema_7 = COALESCE(ema_7, :ema_7),
+                    ema_25 = COALESCE(ema_25, :ema_25),
+                    bb_upper = COALESCE(bb_upper, :bb_upper),
+                    bb_middle = COALESCE(bb_middle, :bb_middle),
+                    bb_lower = COALESCE(bb_lower, :bb_lower),
+                    atr_14 = COALESCE(atr_14, :atr_14)
+                WHERE symbol = :symbol AND interval = :interval AND time = :time
+                """
+            ),
+            indicator_update_payload,
+        )
+        db.commit()
+
     return data

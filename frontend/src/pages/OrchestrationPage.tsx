@@ -1,6 +1,7 @@
 import { mockSessions, mockOrchConfig, mockAgents } from '@/data/mock';
 import { Panel, StatusBadge, agentColorMap } from '@/components/shared/StatusBadge';
 import { cn } from '@/lib/utils';
+import { formatTimeCN } from '@/lib/time';
 import { useState, useEffect } from 'react';
 import type { AgentRole, Session } from '@/types';
 import { fetchSessions, fetchSessionDetail } from '@/data/api';
@@ -260,7 +261,7 @@ export default function OrchestrationPage() {
                     <div className="flex items-center gap-2 text-warning font-medium">
                       <span>Round {rev.round}</span>
                       <span className="text-muted-foreground">·</span>
-                      <span className="text-muted-foreground">{new Date(rev.timestamp).toLocaleTimeString()}</span>
+                      <span className="text-muted-foreground">{formatTimeCN(rev.timestamp)}</span>
                     </div>
                     <p className="text-muted-foreground mt-1">Trigger: {rev.trigger}</p>
                     <p className="text-foreground mt-0.5">Change: {rev.changes}</p>

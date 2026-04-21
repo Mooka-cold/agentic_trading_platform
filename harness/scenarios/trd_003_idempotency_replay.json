@@ -1,0 +1,63 @@
+{
+  "id": "TRD-003",
+  "title": "Trade execute idempotency replay remains stable",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "first request",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/trade/execute",
+        "json": {
+          "action": "BUY",
+          "symbol": "HARNESS/USDT",
+          "quantity": 1.0,
+          "price": 1.0,
+          "confidence": 0.7,
+          "order_type": "MARKET",
+          "idempotency_key": "harness-trd-003-stable-key",
+          "session_id": "harness-trd-003"
+        }
+      },
+      "assertions": [
+        {
+          "name": "status code is 200",
+          "expr": "status == 200"
+        },
+        {
+          "name": "response has status field",
+          "expr": "isinstance(body, dict) and 'status' in body"
+        }
+      ]
+    },
+    {
+      "name": "second request with same idempotency key",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/trade/execute",
+        "json": {
+          "action": "BUY",
+          "symbol": "HARNESS/USDT",
+          "quantity": 1.0,
+          "price": 1.0,
+          "confidence": 0.7,
+          "order_type": "MARKET",
+          "idempotency_key": "harness-trd-003-stable-key",
+          "session_id": "harness-trd-003"
+        }
+      },
+      "assertions": [
+        {
+          "name": "status code is 200",
+          "expr": "status == 200"
+        },
+        {
+          "name": "idempotent replay marker is true",
+          "expr": "isinstance(body, dict) and body.get('idempotent_replay') is True"
+        }
+      ]
+    }
+  ]
+}
