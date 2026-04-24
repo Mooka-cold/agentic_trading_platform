@@ -267,6 +267,17 @@ class WorkflowEngine:
                             update_payload["review_status"] = "SKIPPED"
                         elif state.risk_verdict:
                             update_payload["review_status"] = "APPROVED" if state.risk_verdict.approved else "REJECTED"
+                    else:
+                        # Avoid silent completed sessions with null action.
+                        # Explicitly mark no-proposal cycles as rejected for observability.
+                        update_payload["action"] = "HOLD"
+                        update_payload["review_status"] = "REJECTED"
+                        await self.analyst.emit_log(
+                            content="NO_PROPOSAL: Workflow completed without strategy proposal. Marked as REJECTED.",
+                            log_type="error",
+                            session_id=session_id,
+                            artifact={"reason": "NO_PROPOSAL"},
+                        )
 
 
                     await workflow_session_api.mark_completed(

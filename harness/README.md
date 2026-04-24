@@ -22,6 +22,12 @@ Run replay profile:
 make harness-replay
 ```
 
+Run correctness gate:
+
+```bash
+make harness-correctness
+```
+
 ## Structure
 
 - `harness/bin/run_harness.py`: scenario runner.
@@ -34,6 +40,7 @@ make harness-replay
 - `smoke`: fast correctness gate for key trading paths.
 - `regression`: broader set for pre-merge/nightly checks.
 - `replay`: deterministic checks intended for historical playback extension.
+- `correctness`: release gate profile, including risk-kernel rejections and execute API contract checks.
 
 ## Report Outputs
 

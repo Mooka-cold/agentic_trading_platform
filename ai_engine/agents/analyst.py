@@ -23,6 +23,38 @@ class Analyst(BaseAgent):
     def __init__(self):
         super().__init__("analyst", "The Analyst")
 
+    def _build_fallback_report(
+        self,
+        symbol: str,
+        price: float,
+        rsi: float,
+        macd_hist: float,
+        reason: str,
+    ) -> AnalystOutput:
+        fallback_bias = "NEUTRAL"
+        if rsi >= 60 and macd_hist > 0:
+            fallback_bias = "BULLISH"
+        elif rsi <= 40 and macd_hist < 0:
+            fallback_bias = "BEARISH"
+        return AnalystOutput(
+            sentiment_score=0.0,
+            confidence=0.35,
+            summary=f"Fallback analysis for {symbol}: degraded mode due to upstream LLM instability.",
+            trading_bias=fallback_bias,
+            key_risk="LLM_UNAVAILABLE_DEGRADED_DECISION_QUALITY",
+            evidence_quality="low",
+            counter_thesis_strength=0.6,
+            failure_conditions=[
+                "price_dislocation_gt_1pct_in_5m",
+                "volume_spike_without_confirmation",
+            ],
+            reasoning=(
+                f"Fallback rule-based analysis (reason={reason}). "
+                f"Price={price:.2f}, RSI={rsi:.2f}, MACD_HIST={macd_hist:.4f}. "
+                "Use tighter risk constraints and prefer reduced size."
+            ),
+        )
+
     async def _get_realtime_data(self, symbol: str) -> dict:
         """
         Fetch realtime indicators from Redis (written by Market Streamer).
@@ -121,7 +153,14 @@ class Analyst(BaseAgent):
 
         stale_alert_text = ""
         if stale_warnings:
-            stale_alert_text = "⚠️ **SYSTEM DATA STALE WARNING** ⚠️\nThe following data sources are out of date and may be unreliable:\n" + "\n".join([f"- {w}" for w in stale_warnings]) + "\n\n**INSTRUCTION**: You MUST reduce your confidence score and highlight these risks in your analysis. If multiple critical sources are stale, recommend NEUTRAL/NO TRADE.\n\n"
+            stale_alert_text = (
+                "⚠️ **SYSTEM DATA STALE WARNING** ⚠️\n"
+                "The following data sources are out of date and may be less reliable:\n"
+                + "\n".join([f"- {w}" for w in stale_warnings])
+                + "\n\n**INSTRUCTION**: You MUST explicitly mention stale-data risk and adjust confidence accordingly.\n"
+                "Do NOT force a blanket NO-TRADE only because higher timeframe data is stale.\n"
+                "If entry timeframe remains fresh and signals are coherent, you may still propose a trade with smaller size and stricter invalidation.\n\n"
+            )
 
         # Construct Technical Context for LLM
         technical_text = (
@@ -215,17 +254,38 @@ class Analyst(BaseAgent):
             if state.analyst_feedback:
                 user_instruction = f"\n[URGENT QUERY FROM STRATEGIST] The strategist needs clarification: '{state.analyst_feedback}'. Please specifically address this in your reasoning and risk analysis."
             
-            result = await self.call_llm(
-                prompt_vars={
-                    "news_list": news_list,
-                    "technical_data": technical_text + user_instruction,
-                    "sub_agent_reports": sub_agent_reports
-                },
-                output_model=AnalystOutput
-            )
+            synthesis_error = None
+            report = None
+            for attempt in range(3):
+                try:
+                    result = await self.call_llm(
+                        prompt_vars={
+                            "news_list": news_list,
+                            "technical_data": technical_text + user_instruction,
+                            "sub_agent_reports": sub_agent_reports
+                        },
+                        output_model=AnalystOutput
+                    )
+                    report = AnalystOutput(**result)
+                    break
+                except Exception as llm_exc:
+                    synthesis_error = llm_exc
+                    if attempt < 2:
+                        await asyncio.sleep(0.8 * (attempt + 1))
 
-            # Result is a dict (parsed JSON)
-            report = AnalystOutput(**result)
+            if report is None:
+                report = self._build_fallback_report(
+                    symbol=symbol,
+                    price=float(price or 0.0),
+                    rsi=float(rsi or 50.0),
+                    macd_hist=float(macd_hist or 0.0),
+                    reason=str(synthesis_error) if synthesis_error else "unknown",
+                )
+                await self.think(
+                    f"LLM synthesis failed after retries, switched to fallback analyst report: {synthesis_error}",
+                    session_id,
+                    log_type="error",
+                )
             
             await self.say(
                 f"BIAS: {report.trading_bias}. {report.summary}", 
@@ -263,4 +323,3 @@ class Analyst(BaseAgent):
             print(f"[Analyst Error] {traceback_str}", flush=True)
             # Fallback
             return {}
-

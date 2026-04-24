@@ -1,0 +1,63 @@
+{
+  "id": "TRD-008",
+  "title": "Idempotent replay keeps risk rejection payload consistent",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "first rejected request",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/trade/execute",
+        "json": {
+          "action": "BUY",
+          "symbol": "BTC/USDT",
+          "quantity": 0.0,
+          "price": 60000.0,
+          "confidence": 0.7,
+          "order_type": "MARKET",
+          "idempotency_key": "harness-trd-008-risk-reject",
+          "session_id": "harness-trd-008"
+        }
+      },
+      "assertions": [
+        {
+          "name": "risk rejected",
+          "expr": "status == 200 and isinstance(body, dict) and body.get('status') == 'REJECTED' and body.get('reject_code') == 'INVALID_QUANTITY'"
+        },
+        {
+          "name": "risk check id exists",
+          "expr": "isinstance(body.get('risk_check_id'), str) and len(body.get('risk_check_id')) > 0"
+        }
+      ]
+    },
+    {
+      "name": "replay same rejected request",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/trade/execute",
+        "json": {
+          "action": "BUY",
+          "symbol": "BTC/USDT",
+          "quantity": 0.0,
+          "price": 60000.0,
+          "confidence": 0.7,
+          "order_type": "MARKET",
+          "idempotency_key": "harness-trd-008-risk-reject",
+          "session_id": "harness-trd-008"
+        }
+      },
+      "assertions": [
+        {
+          "name": "replay marker true",
+          "expr": "status == 200 and isinstance(body, dict) and body.get('idempotent_replay') is True"
+        },
+        {
+          "name": "same rejection code still present",
+          "expr": "body.get('status') == 'REJECTED' and body.get('reject_code') == 'INVALID_QUANTITY'"
+        }
+      ]
+    }
+  ]
+}

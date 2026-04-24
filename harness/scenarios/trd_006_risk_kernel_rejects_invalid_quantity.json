@@ -1,0 +1,38 @@
+{
+  "id": "TRD-006",
+  "title": "Risk kernel rejects non-positive quantity before execution",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "submit invalid quantity",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/trade/execute",
+        "json": {
+          "action": "BUY",
+          "symbol": "BTC/USDT",
+          "quantity": 0.0,
+          "price": 60000.0,
+          "confidence": 0.7,
+          "order_type": "MARKET",
+          "session_id": "harness-trd-006"
+        }
+      },
+      "assertions": [
+        {
+          "name": "status code is 200",
+          "expr": "status == 200"
+        },
+        {
+          "name": "risk rejection status",
+          "expr": "isinstance(body, dict) and body.get('status') == 'REJECTED' and body.get('mode') == 'REJECTED'"
+        },
+        {
+          "name": "reject code present",
+          "expr": "isinstance(body, dict) and body.get('reject_code') == 'INVALID_QUANTITY' and isinstance(body.get('risk_check_id'), str)"
+        }
+      ]
+    }
+  ]
+}

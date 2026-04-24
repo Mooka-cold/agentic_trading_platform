@@ -255,11 +255,16 @@ class Reflector(BaseAgent):
                 tasks_to_process = tasks[:100]
                 
                 for task in tasks_to_process:
+                    lock_key = None
+                    lock_acquired = False
                     try:
                         target_session_id = task['session_id']
+                        stage = task['stage']
+                        symbol = task['symbol']
+                        action = task['action']
                         
                         # Acquire Lock
-                        lock_key = f"lock:reflector:{target_session_id}"
+                        lock_key = f"lock:reflector:{target_session_id}:{stage}"
                         # Check if already locked
                         # Note: redis_client is redis.Redis (async or sync?)
                         # In WorkflowEngine.__init__, we used redis.from_url(..., decode_responses=True)
@@ -277,10 +282,7 @@ class Reflector(BaseAgent):
                         # Set Lock (NX=Not Exists, EX=Expire 600s)
                         if not await self.redis_client.set(lock_key, "PROCESSING", ex=600, nx=True):
                             continue
-                            
-                        stage = task['stage']
-                        symbol = task['symbol']
-                        action = task['action']
+                        lock_acquired = True
                         
                         # Log start of review for this specific session
                         await self.emit_log(
@@ -316,11 +318,14 @@ class Reflector(BaseAgent):
                             log_res = await client.get(f"{settings.BACKEND_URL}/api/v1/workflow/session/{target_session_id}/logs")
                             if log_res.status_code == 200:
                                 logs_data = log_res.json().get('logs', [])
+                                logs_data = logs_data[-200:]
                                 # Format logs for LLM
                                 logs_context = "\n".join([
                                     f"[{l['timestamp']}] {l['agent'].upper()}: {l['type']} - {l['content'][:500]}" # Truncate long content
                                     for l in logs_data
                                 ])
+                                if len(logs_context) > 50000:
+                                    logs_context = logs_context[-50000:]
                         except Exception as le:
                             print(f"[Reflector] Log fetch failed: {le}", flush=True)
 
@@ -361,7 +366,7 @@ class Reflector(BaseAgent):
                                 # FIX: bind() method might not be available on all LLM wrappers or versions.
                                 # Use standard invoke and parse.
                                 response = await self.llm.ainvoke(messages)
-                                content = response.content
+                                content = response.content if isinstance(response.content, str) else json.dumps(response.content)
                             else:
                                 content = json.dumps({"conclusion": f"Simulated {stage} review for {action}."})
                                 
@@ -369,14 +374,37 @@ class Reflector(BaseAgent):
                             print(f"[Reflector] LLM failed: {llm_e}", flush=True)
                             content = json.dumps({"error": str(llm_e), "stage": stage})
 
+                        # Validate Reflection Payload before persisting/updating stage.
+                        parsed_reflection = None
+                        try:
+                            json_str = content
+                            if "```json" in json_str:
+                                json_str = json_str.split("```json", 1)[1].split("```", 1)[0]
+                            elif "```" in json_str:
+                                json_str = json_str.split("```", 1)[1].split("```", 1)[0]
+                            parsed_reflection = json.loads(json_str)
+                            required_keys = {"session_id", "stage", "review_summary", "logic_grade", "outcome_type", "key_findings", "learned_rules", "detailed_analysis"}
+                            if not isinstance(parsed_reflection, dict):
+                                raise ValueError("reflection output is not a JSON object")
+                            missing_keys = [k for k in required_keys if k not in parsed_reflection]
+                            if missing_keys:
+                                raise ValueError(f"missing keys: {missing_keys}")
+                        except Exception as ve:
+                            await self.emit_log(
+                                f"Skip {stage} review persistence due to invalid LLM JSON: {ve}",
+                                "error",
+                                target_session_id,
+                            )
+                            continue
+
                         # 6. Save Reflection & Update Status
                         await client.post(
                             f"{settings.BACKEND_URL}/api/v1/trade/reflection",
                             json={
                                 "session_id": target_session_id,
                                 "stage": stage,
-                                "content": content,
-                                "score": 0.0,
+                                "content": json.dumps(parsed_reflection, ensure_ascii=False),
+                                "score": float(parsed_reflection.get("logic_grade", 0) or 0),
                                 "market_context": json.dumps({"price": current_price})
                             }
                         )
@@ -403,9 +431,6 @@ class Reflector(BaseAgent):
                         if patch_res.status_code != 200:
                             print(f"[Reflector] WARNING: Failed to update status for {target_session_id}: {patch_res.text}", flush=True)
 
-                        # Release Lock
-                        await self.redis_client.delete(f"lock:reflector:{target_session_id}")
-
                         await self.emit_log(
                             f"Completed {stage} review.", 
                             "output", 
@@ -418,6 +443,12 @@ class Reflector(BaseAgent):
                         import traceback
                         traceback.print_exc()
                         # Continue to next task!
+                    finally:
+                        if lock_key and lock_acquired:
+                            try:
+                                await self.redis_client.delete(lock_key)
+                            except Exception as lock_e:
+                                print(f"[Reflector] Failed to release lock {lock_key}: {lock_e}", flush=True)
 
         except Exception as e:
             print(f"[Reflector] Periodic review loop failed: {e}", flush=True)

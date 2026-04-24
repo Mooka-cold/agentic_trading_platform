@@ -67,8 +67,31 @@ class Reviewer(BaseAgent):
         proposal = state.strategy_proposal
         
         if not proposal:
-            await self.think("No strategy proposal received. Skipping risk review.", session_id)
-            return {}
+            await self.say(
+                "REJECTED [NO_PROPOSAL]. No strategy proposal received from strategist/PM chain.",
+                session_id,
+                artifact={
+                    "verdict": "REJECTED",
+                    "code": "NO_PROPOSAL",
+                    "reason": "missing_strategy_proposal"
+                }
+            )
+            verdict = RiskVerdict(
+                approved=False,
+                risk_score=100.0,
+                message="No strategy proposal received. Rejecting this cycle.",
+                reject_code="NO_PROPOSAL",
+                checks={"proposal_presence": "FAIL"},
+            )
+            return {
+                "risk_verdict": verdict,
+                "review_feedback": {
+                    "reject_code": verdict.reject_code,
+                    "message": verdict.message,
+                    "checks": verdict.checks,
+                    "fix_suggestions": {"required": ["analyst_report", "bull_proposal", "bear_proposal"]},
+                },
+            }
 
         if proposal.action == "HOLD":
             await self.say(
@@ -711,10 +734,63 @@ class Reviewer(BaseAgent):
                                 "checks": verdict.checks
                             }
                         }
+
+                    execution_constraints = state.execution_constraints or {}
+                    budget_eval = execution_service.evaluate_cost_budget(
+                        constraints=execution_constraints,
+                        quantity=float(final_quantity),
+                    )
+                    if not budget_eval.get("allowed", False):
+                        violations = budget_eval.get("violations", [])
+                        verdict.approved = False
+                        verdict.reject_code = "COST_BUDGET_BLOCKED"
+                        verdict.message = f"Execution blocked by cost policy: {', '.join(violations)}"
+                        verdict.checks = {
+                            **(verdict.checks or {}),
+                            "cost_budget": "FAIL",
+                            "min_order_quantity": "FAIL" if "MIN_ORDER_QTY" in violations else "PASS",
+                            "variable_cost_budget": "FAIL" if "VARIABLE_COST_BUDGET_EXCEEDED" in violations else "PASS",
+                        }
+                        verdict.fix_suggestions = {
+                            **(verdict.fix_suggestions or {}),
+                            "profile": budget_eval.get("profile"),
+                            "caps": budget_eval.get("caps"),
+                            "estimated_costs": budget_eval.get("estimated"),
+                            "recommended_execution_algo": budget_eval.get("recommended_execution_algo"),
+                        }
+                        await self.say(
+                            f"REJECTED [{verdict.reject_code}]. {verdict.message}",
+                            session_id,
+                            artifact={
+                                "verdict": "REJECTED",
+                                "code": verdict.reject_code,
+                                "budget_eval": budget_eval,
+                            },
+                            symbol=state.market_data.symbol,
+                        )
+                        return {
+                            "risk_verdict": verdict,
+                            "review_feedback": {
+                                "reject_code": verdict.reject_code,
+                                "message": verdict.message,
+                                "fix_suggestions": verdict.fix_suggestions,
+                                "checks": verdict.checks,
+                            },
+                        }
+
                     if verdict.adjusted_size:
                          await self.think(f"Applying Risk-Adjusted Size: {final_quantity}", session_id)
 
-                    execution_algo = state.execution_constraints.get("execution_algo", "STANDARD") if state.execution_constraints else "STANDARD"
+                    execution_algo = str(
+                        budget_eval.get("recommended_execution_algo")
+                        or execution_constraints.get("execution_algo", "STANDARD")
+                    ).upper()
+                    await self.say(
+                        f"COST_POLICY: profile={budget_eval.get('profile')} | variable={budget_eval.get('estimated', {}).get('variable_cost_bps')}bps/{budget_eval.get('caps', {}).get('variable_cost_cap_bps')}bps | algo={execution_algo}",
+                        session_id,
+                        artifact=budget_eval,
+                        symbol=state.market_data.symbol,
+                    )
                     
                     data = await execution_service.execute_order(
                         action=proposal.action,
@@ -747,10 +823,36 @@ class Reviewer(BaseAgent):
                             session_id
                         )
                     else:
+                        verdict.approved = False
+                        verdict.reject_code = "EXECUTION_FAILED"
+                        verdict.message = f"Execution failed: {data.get('message')}"
+                        verdict.checks = {**(verdict.checks or {}), "execution": "FAIL"}
                         await self.think(f"Execution Failed: {data.get('message')}", session_id)
+                        return {
+                            "risk_verdict": verdict,
+                            "review_feedback": {
+                                "reject_code": verdict.reject_code,
+                                "message": verdict.message,
+                                "fix_suggestions": verdict.fix_suggestions,
+                                "checks": verdict.checks
+                            }
+                        }
                             
                 except Exception as ex:
+                     verdict.approved = False
+                     verdict.reject_code = "EXECUTION_EXCEPTION"
+                     verdict.message = f"Execution error: {str(ex)}"
+                     verdict.checks = {**(verdict.checks or {}), "execution": "FAIL"}
                      await self.think(f"Execution Error: {str(ex)}", session_id)
+                     return {
+                         "risk_verdict": verdict,
+                         "review_feedback": {
+                             "reject_code": verdict.reject_code,
+                             "message": verdict.message,
+                             "fix_suggestions": verdict.fix_suggestions,
+                             "checks": verdict.checks
+                         }
+                     }
                 # ---------------------
 
             else:

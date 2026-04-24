@@ -182,7 +182,7 @@ def _write_reports(report: Dict[str, Any]) -> Tuple[pathlib.Path, pathlib.Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Trading harness runner")
-    parser.add_argument("--profile", default="smoke", choices=["smoke", "regression", "replay"])
+    parser.add_argument("--profile", default="smoke")
     parser.add_argument("--backend-url", default=os.getenv("HARNESS_BACKEND_URL", "http://localhost:3201"))
     parser.add_argument("--ai-engine-url", default=os.getenv("HARNESS_AI_ENGINE_URL", "http://localhost:3202"))
     parser.add_argument("--timeout", type=int, default=15)
@@ -190,6 +190,13 @@ def main() -> int:
 
     profile_index = _load_json(SCENARIO_DIR / "profiles.json")
     scenario_files = profile_index.get(args.profile, [])
+    if args.profile not in profile_index:
+        available = ", ".join(sorted(profile_index.keys()))
+        print(
+            f"[ERROR] unknown profile '{args.profile}'. available profiles: {available}",
+            file=sys.stderr,
+        )
+        return 2
     if not scenario_files:
         print(f"[ERROR] profile '{args.profile}' has no scenario files", file=sys.stderr)
         return 2

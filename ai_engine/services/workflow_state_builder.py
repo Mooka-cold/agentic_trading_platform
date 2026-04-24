@@ -6,7 +6,12 @@ from services.market_data import market_data_service
 from services.market_intel import market_intel_service
 from services.safety_guard import safety_guard_service
 from services.system_config import system_config_service
-from model.policies import DataRoutingPolicy, OrchestrationConfig
+from model.policies import (
+    DataRoutingPolicy,
+    ExecutionCostPolicy,
+    OrchestrationConfig,
+    default_execution_cost_policy,
+)
 from shared.core.symbols import get_schedule_timeframes_from_env
 
 
@@ -32,6 +37,12 @@ class WorkflowStateBuilder:
         if isinstance(raw, dict):
             return OrchestrationConfig(**raw).model_dump()
         return OrchestrationConfig().model_dump()
+
+    def _load_execution_cost_policy(self) -> Dict[str, Any]:
+        raw = system_config_service.get_json("EXECUTION_COST_POLICY")
+        if isinstance(raw, dict):
+            return ExecutionCostPolicy(**raw).model_dump()
+        return default_execution_cost_policy().model_dump()
 
     async def build(
         self,
@@ -86,12 +97,15 @@ class WorkflowStateBuilder:
             mark_price=market_data.price,
         )
         execution_constraints = market_intel_service.build_execution_constraints(regime=regime, micro=microstructure)
+        execution_constraints["microstructure"] = microstructure
         routing_policy = self._load_data_routing_policy()
         orchestration_config = self._load_orchestration_config()
+        execution_cost_policy = self._load_execution_cost_policy()
         execution_constraints["data_routing_policy"] = routing_policy
         execution_constraints["max_revision_rounds"] = int(orchestration_config.get("max_revision_rounds", 2))
         execution_constraints["data_quality"] = data_quality
         execution_constraints["data_quality_reasons"] = list(unresolved_todos)
+        execution_constraints["execution_cost_policy"] = execution_cost_policy
         safety = safety_guard_service.evaluate(
             market_data={"price": market_data.price},
             micro=microstructure,

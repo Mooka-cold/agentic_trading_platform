@@ -1,0 +1,34 @@
+{
+  "id": "TRD-007",
+  "title": "Trade execute contract rejects unsupported action",
+  "priority": "high",
+  "steps": [
+    {
+      "name": "submit unsupported action",
+      "request": {
+        "service": "backend",
+        "method": "POST",
+        "path": "/api/v1/trade/execute",
+        "json": {
+          "action": "INVALID_ACTION",
+          "symbol": "BTC/USDT",
+          "quantity": 0.01,
+          "price": 60000.0,
+          "confidence": 0.7,
+          "order_type": "MARKET",
+          "session_id": "harness-trd-007"
+        }
+      },
+      "assertions": [
+        {
+          "name": "status code is 400",
+          "expr": "status == 400"
+        },
+        {
+          "name": "error detail includes invalid action",
+          "expr": "isinstance(body, dict) and isinstance(body.get('detail'), str) and 'Invalid action' in body.get('detail')"
+        }
+      ]
+    }
+  ]
+}

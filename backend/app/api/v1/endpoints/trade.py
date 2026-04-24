@@ -10,6 +10,8 @@ from app.db.session import get_user_db
 from app.services.execution.service import ExecutionService
 from app.api.v1.deps import get_runtime_user_id
 from app.core.config import settings
+from app.core.risk_kernel import evaluate_trade_risk
+from shared.models.system import SystemConfig
 
 class TradeAction(BaseModel):
     action: str  # BUY/SELL
@@ -46,6 +48,7 @@ async def execute_trade(
     redis_client = None
     lock_key = None
     response_key = None
+    risk_result = None
     
     try:
         raw_idempotency_key = (trade.idempotency_key or "").strip()
@@ -99,6 +102,44 @@ async def execute_trade(
             if matches:
                 trigger_price = float(matches[-1])
 
+        risk_config_keys = [
+            "RISK_KERNEL_MIN_NOTIONAL_USDT",
+            "RISK_KERNEL_MAX_ORDER_NOTIONAL_USDT",
+            "RISK_KERNEL_MAX_SYMBOL_NOTIONAL_USDT",
+            "RISK_KERNEL_MIN_CONFIDENCE",
+        ]
+        cfg_rows = db.query(SystemConfig).filter(SystemConfig.key.in_(risk_config_keys)).all()
+        risk_cfg = {row.key: row.value for row in cfg_rows}
+
+        risk_result = evaluate_trade_risk(
+            user_id=user_id,
+            symbol=trade.symbol,
+            side=side,
+            quantity=float(trade.quantity),
+            price=float(trade.price),
+            confidence=float(trade.confidence),
+            execution_service=service,
+            db_config=risk_cfg,
+        )
+        if not risk_result["allowed"]:
+            response_payload = {
+                "status": "REJECTED",
+                "message": "Risk kernel rejected order",
+                "order_id": None,
+                "executed_price": None,
+                "mode": "REJECTED",
+                "pnl": 0.0,
+                "new_balance": service.get_balance(),
+                "leverage_guard": None,
+                "reject_code": risk_result["reject_code"],
+                "risk_reasons": risk_result["reasons"],
+                "risk_check_id": risk_result["risk_check_id"],
+                "risk_metrics": risk_result["metrics"],
+            }
+            if redis_client and response_key:
+                await redis_client.set(response_key, json.dumps(response_payload, ensure_ascii=False), ex=900)
+            return response_payload
+
         _, execution_info = service.place_order(
             symbol=trade.symbol,
             side=side,
@@ -135,6 +176,10 @@ async def execute_trade(
             "pnl": execution_info.get("pnl", 0.0),
             "new_balance": new_balance,
             "leverage_guard": execution_info.get("leverage_guard"),
+            "reject_code": None,
+            "risk_reasons": [],
+            "risk_check_id": risk_result["risk_check_id"] if risk_result else None,
+            "risk_metrics": risk_result["metrics"] if risk_result else None,
         }
         if redis_client and response_key:
             await redis_client.set(response_key, json.dumps(response_payload, ensure_ascii=False), ex=900)
@@ -427,7 +472,8 @@ def get_pending_reviews(db: Session = Depends(get_user_db)):
     t6_threshold = now - timedelta(hours=6)
     sessions_t6 = db.query(WorkflowSession).filter(
         WorkflowSession.end_time <= t6_threshold,
-        WorkflowSession.periodic_review_status == "T1_DONE"
+        WorkflowSession.periodic_review_status == "T1_DONE",
+        WorkflowSession.status != WorkflowStatus.FAILED
     ).all()
     for s in sessions_t6:
         tasks.append({
@@ -441,7 +487,8 @@ def get_pending_reviews(db: Session = Depends(get_user_db)):
     t24_threshold = now - timedelta(hours=24)
     sessions_t24 = db.query(WorkflowSession).filter(
         WorkflowSession.end_time <= t24_threshold,
-        WorkflowSession.periodic_review_status == "T6_DONE"
+        WorkflowSession.periodic_review_status == "T6_DONE",
+        WorkflowSession.status != WorkflowStatus.FAILED
     ).all()
     for s in sessions_t24:
         tasks.append({

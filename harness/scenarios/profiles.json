@@ -16,5 +16,15 @@
   "replay": [
     "trd_004_rollup_solidify_api.json",
     "trd_005_kline_indicator_availability.json"
+  ],
+  "correctness": [
+    "trd_001_paper_account_contract.json",
+    "trd_002_staleness_gate_rejects_open.json",
+    "trd_003_idempotency_replay.json",
+    "trd_004_rollup_solidify_api.json",
+    "trd_005_kline_indicator_availability.json",
+    "trd_006_risk_kernel_rejects_invalid_quantity.json",
+    "trd_007_trade_execute_rejects_invalid_action.json",
+    "trd_008_replay_consistency_on_risk_reject.json"
   ]
 }

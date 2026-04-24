@@ -1,4 +1,4 @@
-.PHONY: harness-smoke harness-regression harness-replay
+.PHONY: harness-smoke harness-regression harness-replay harness-correctness
 
 harness-smoke:
 	python3 harness/bin/run_harness.py --profile smoke
@@ -8,3 +8,6 @@ harness-regression:
 
 harness-replay:
 	python3 harness/bin/run_harness.py --profile replay
+
+harness-correctness:
+	python3 harness/bin/run_harness.py --profile correctness

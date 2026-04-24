@@ -116,11 +116,14 @@ python -m py_compile agents/portfolio_manager.py
 ```bash
 cd /Users/huangyong/Documents/Qell/ai_trading
 make harness-smoke
+make harness-correctness
 ```
 
 说明：
 
 - `harness-smoke` 为发布前最小正确性闸门，重点覆盖余额契约、开仓新鲜度拒单、幂等、K线固化与指标可用性。
+- `harness-correctness` 为发布阻断闸门，额外覆盖风险内核拦截与交易接口契约。
+- GitHub Actions `Correctness Gate` 工作流在 PR / main push 时自动执行 `make harness-correctness`。
 
 ## 5. 常见故障与处理
 
@@ -177,4 +180,5 @@ npm run build
 - 风控拒绝是否带 reject_code 与 fix_suggestions。
 - 前端历史页是否可查看完整会话日志与 artifact。
 - `make harness-smoke` 是否 100% 通过。
+- `make harness-correctness` 是否 100% 通过。
 - 依赖审计是否维持 `critical=0`。

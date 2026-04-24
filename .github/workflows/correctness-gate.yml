@@ -1,0 +1,54 @@
+name: Correctness Gate
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  harness-correctness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start required services
+        run: |
+          docker compose up -d --build db-users db-market redis chromadb backend ai-engine crawler scheduler market-streamer
+
+      - name: Wait for backend health
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3201/health >/dev/null; then
+              echo "backend healthy"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "backend not healthy in time" >&2
+          exit 1
+
+      - name: Wait for ai-engine health
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3202/health >/dev/null; then
+              echo "ai-engine healthy"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "ai-engine not healthy in time" >&2
+          exit 1
+
+      - name: Run correctness harness
+        run: make harness-correctness
+
+      - name: Print service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

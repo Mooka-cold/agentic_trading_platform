@@ -223,6 +223,18 @@ export default function DashboardPage() {
           recoveredKline = true;
         }
       } catch {}
+      // If solidify call fails/transiently times out, do a direct retry once more.
+      if (!recoveredKline) {
+        try {
+          const retried = await fetchMarketKline(symbol, interval, 120);
+          if ((retried || []).length > 0) {
+            setKline(retried);
+            setUsingSecondFallback(false);
+            notices.push('K线已自动修复（重试成功）');
+            recoveredKline = true;
+          }
+        } catch {}
+      }
     }
 
     if (!recoveredKline && (klineResult.status !== 'fulfilled' || (klineResult.value || []).length === 0)) {
@@ -272,11 +284,31 @@ export default function DashboardPage() {
   }, [symbol, interval]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const timer = window.setInterval(() => {
       fetchMarketTicker(symbol, 10).then(setTicker).catch(() => null);
     }, 5000);
-    return () => clearInterval(timer);
+    return () => window.clearInterval(timer);
   }, [symbol]);
+
+  useEffect(() => {
+    if (!usingSecondFallback) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const retried = await fetchMarketKline(symbol, interval, 120);
+        if ((retried || []).length > 0) {
+          setKline(retried);
+          setUsingSecondFallback(false);
+          setError((prev) => {
+            if (!prev) return 'K线已自动修复（退出秒级回退）';
+            return `K线已自动修复（退出秒级回退）；${prev}`;
+          });
+        }
+      } catch {
+        // Keep fallback mode until kline endpoint recovers.
+      }
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [usingSecondFallback, symbol, interval]);
 
   const latest = kline[kline.length - 1];
   const chartData = useMemo(
@@ -701,10 +733,10 @@ export default function DashboardPage() {
           {sentimentDashboard ? (
             <div className="space-y-3">
               {[
-                ['最近 1 个自然小时', sentimentDashboard.current_hour],
-                ['最近 6 个自然小时', sentimentDashboard.rolling_6h],
-                ['最近 24 个自然小时', sentimentDashboard.rolling_24h],
-              ].map(([title, window]) => (
+                { title: '最近 1 个自然小时', window: sentimentDashboard.current_hour },
+                { title: '最近 6 个自然小时', window: sentimentDashboard.rolling_6h },
+                { title: '最近 24 个自然小时', window: sentimentDashboard.rolling_24h },
+              ].map(({ title, window }) => (
                 <div key={title} className="rounded-md border border-border p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">{title}</span>

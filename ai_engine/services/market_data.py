@@ -200,13 +200,18 @@ class MarketDataService:
         raw_df['time'] = pd.to_datetime(raw_df['time'])
         raw_df.set_index('time', inplace=True)
         
+        # Staleness thresholds must be timeframe-aware.
+        # A fixed 300s threshold for all TFs would make 15m/1h almost always stale.
+        # Values below keep data quality strict while matching each TF update rhythm.
         resample_rules = {
-            "5min": "5m (Entry)",
-            "15min": "15m (Structure)", 
-            "1h": "1h (Trend)"
+            "5min": {"label": "5m (Entry)", "stale_threshold_seconds": 15 * 60},
+            "15min": {"label": "15m (Structure)", "stale_threshold_seconds": 45 * 60},
+            "1h": {"label": "1h (Trend)", "stale_threshold_seconds": 150 * 60},
         }
         
-        for rule, label in resample_rules.items():
+        for rule, meta in resample_rules.items():
+            label = meta["label"]
+            stale_threshold_seconds = int(meta["stale_threshold_seconds"])
             # Resample OHLCV
             try:
                 # Use 'ME' 'h' 'min' aliases for newer pandas, but '1h' '5min' usually works
@@ -291,7 +296,8 @@ class MarketDataService:
             # Check freshness of this timeframe
             last_ts = pd.to_datetime(last.name).timestamp() if isinstance(last.name, pd.Timestamp) else 0
             now_ts = pd.Timestamp.utcnow().timestamp()
-            is_stale = (now_ts - last_ts) > 300 if last_ts > 0 else False
+            age_seconds = (now_ts - last_ts) if last_ts > 0 else None
+            is_stale = (age_seconds is None) or (age_seconds > stale_threshold_seconds)
             
             trend = "NEUTRAL"
             close = get_val(last['close'])
@@ -311,7 +317,9 @@ class MarketDataService:
                 "macd_hist": get_val(last.get('Hist', 0.0)),
                 "atr": get_val(last.get('ATR', 0.0)),
                 "bb_pos": "UPPER" if close > get_val(last.get('BB_Upper', close)) else "LOWER" if close < get_val(last.get('BB_Lower', close)) else "MIDDLE",
-                "is_stale": is_stale
+                "is_stale": is_stale,
+                "age_seconds": int(age_seconds) if age_seconds is not None else None,
+                "stale_threshold_seconds": stale_threshold_seconds,
             }
             
         return context
