@@ -45,6 +45,14 @@ tests/
 */tests/
 test_*.py
 
+# Local debug/query scripts (may contain hardcoded DB credentials)
+/query_*.py
+/check_interfaces.py
+/fetch_latest_session.py
+
+# Local vector store / runtime data
+ai_engine/data/
+
 # Harness
 harness/reports/*
 !harness/reports/.gitkeep
