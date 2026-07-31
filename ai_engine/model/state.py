@@ -37,6 +37,27 @@ class StrategyProposal(BaseModel):
     counter_thesis_strength: Optional[float] = Field(default=0.5, description="0.0-1.0")
     failure_conditions: List[str] = Field(default_factory=list)
 
+class DebateTurn(BaseModel):
+    """
+    A single utterance in the multi-agent debate thread.
+    Each Strategy Master (persona) emits one of these per round.
+    """
+    round: int = Field(description="Debate round index, starting from 1")
+    agent_id: str = Field(description="Persona ID of the speaker (e.g. 'buffett')")
+    agent_name: Optional[str] = Field(default=None, description="Human-readable name (e.g. 'Warren Buffett')")
+    action: str = Field(description="The agent's proposed action this round")
+    confidence: float = Field(description="Agent's confidence in their own action, 0.0-1.0")
+    thesis: str = Field(description="A 1-2 sentence core thesis supporting the action")
+    rebuttals: List[str] = Field(
+        default_factory=list,
+        description="Targeted responses to specific other agents' theses (e.g. 'Re: JustinSun - his 10x framing ignores tail risk')"
+    )
+    references: List[str] = Field(
+        default_factory=list,
+        description="Agent IDs this turn is responding to. Empty for round 1 (independent reasoning)."
+    )
+    timestamp: Optional[str] = None
+
 class RiskVerdict(BaseModel):
     approved: bool
     risk_score: float  # 0-100 (Higher is riskier)
@@ -84,22 +105,9 @@ class ImpactTag(BaseModel):
     reason: str
 
 class NewsInterpretationOutput(BaseModel):
-    bias: str
-    magnitude: float
-    confidence: float
-    severity: str
-    event_type_l1: str
-    event_type_l2: str
-    summary_cn: str
-    asset_mentions: List[str] = Field(default_factory=list)
-    asset_clusters: List[str] = Field(default_factory=list)
-    factor_tags: List[str] = Field(default_factory=list)
-    impact_tags: List[ImpactTag] = Field(default_factory=list)
-    mapping_version: str = "taxonomy_v1"
-    cross_market_impacts: List[CrossMarketImpact] = Field(default_factory=list)
-    evidence_quotes: List[str] = Field(default_factory=list)
-    noise_flags: List[str] = Field(default_factory=list)
-    final_status: str
+    summary_cn: str = Field(description="高度压缩的中文核心事实摘要，去除所有冗余和主观猜测")
+    asset_mentions: List[str] = Field(default_factory=list, description="提及的核心资产，如 BTC, ETH 等")
+    is_noise: bool = Field(default=False, description="如果新闻纯属噪音、无实质内容或与加密市场完全无关，则设为 true")
 
 class MacroOutput(BaseModel):
     regime: str = Field(description="RISK_ON | RISK_OFF | NEUTRAL")
@@ -135,6 +143,10 @@ class VolatilityHunterOutput(BaseModel):
 class AgentState(BaseModel):
     # --- Context (Input) ---
     session_id: str
+    user_id: Optional[str] = "default"
+    custom_prompts: Optional[Dict[str, str]] = Field(default_factory=dict)
+    team_config: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    trigger_context: Optional[Dict[str, Any]] = Field(default_factory=dict)
     market_data: MarketData
     account_balance: float = 0.0
     positions: list[Dict[str, Any]] = []
@@ -143,24 +155,30 @@ class AgentState(BaseModel):
     portfolio_context: Optional[Dict[str, Any]] = None
     execution_constraints: Optional[Dict[str, Any]] = None
     unresolved_todos: List[str] = Field(default_factory=list)
+
+    # --- News Context (LLM-compressed) ---
+    # Pre-digested news summaries loaded by news_stage_node. Each item is the
+    # output of the sentiment_news_interpreter (summary_cn + asset_mentions +
+    # is_noise), already compressed to ~30-60 tokens/item. Downstream agents
+    # receive this via extra_preamble so no persona YAML changes are needed.
+    news_digest: List[Dict[str, Any]] = Field(default_factory=list)
     
     # --- Agent Outputs (Mutable State) ---
-    analyst_report: Optional[AnalystOutput] = None
-    sentiment_report: Optional[SentimentOutput] = None
-    macro_report: Optional[MacroOutput] = None
-    onchain_report: Optional[OnChainOutput] = None
+    market_reports: Dict[str, Any] = Field(default_factory=dict)
+    decision_proposals: Dict[str, StrategyProposal] = Field(default_factory=dict)
     
-    # Phase 4: Multi-Agent Debate
-    bull_proposal: Optional[StrategyProposal] = None
-    bear_proposal: Optional[StrategyProposal] = None
-    
-    strategy_proposal: Optional[StrategyProposal] = None # The final chosen proposal by PM
+    strategy_proposal: Optional[StrategyProposal] = None # The final chosen proposal by Arbitrator
     risk_verdict: Optional[RiskVerdict] = None
     review_feedback: Optional[Dict[str, Any]] = None
     debate_notes: Optional[Dict[str, Any]] = None
     analyst_feedback: Optional[str] = None # Strategist's question to Analyst
-    execution_result: Optional[Dict[str, Any]] = None  # <--- New Field for Execution Result
+    execution_result: Optional[Dict[str, Any]] = None  # Execution Result
     strategy_revision_round: int = 0
+
+    # --- Debate Thread (异人格观点碰撞) ---
+    # Each strategy master emits DebateTurn objects per round, allowing Finalizer to
+    # read the full debate context instead of just voting numbers.
+    debate_thread: List[DebateTurn] = Field(default_factory=list)
     
     # --- Meta ---
     logs: List[AgentLog] = []

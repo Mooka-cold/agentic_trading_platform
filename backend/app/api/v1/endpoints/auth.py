@@ -3,13 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlalchemy.orm import Session
 from app.db.session import get_user_db
 from shared.models.user import User
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 import secrets
 from eth_account import Account
 from eth_account.messages import encode_defunct
 import jwt
 from datetime import datetime, timedelta
 from app.core.config import settings
+import hashlib
 
 router = APIRouter()
 
@@ -18,12 +19,24 @@ class WalletLoginRequest(BaseModel):
     message: str # SIWE Message
     signature: str
 
+class EmailLoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+    user_id: str
 
 SECRET_KEY = settings.SECRET_KEY if hasattr(settings, "SECRET_KEY") else "dev_secret_key"
 ALGORITHM = "HS256"
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256((password + SECRET_KEY).encode()).hexdigest()
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
@@ -34,6 +47,39 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+@router.post("/register", response_model=Token)
+def register(
+    req: RegisterRequest,
+    db: Session = Depends(get_user_db)
+) -> Any:
+    user = db.query(User).filter(User.email == req.email).first()
+    if user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+        
+    user = User(
+        email=req.email,
+        hashed_password=hash_password(req.password),
+        is_active=True
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    
+    access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
+
+@router.post("/login/email", response_model=Token)
+def login_with_email(
+    req: EmailLoginRequest,
+    db: Session = Depends(get_user_db)
+) -> Any:
+    user = db.query(User).filter(User.email == req.email).first()
+    if not user or user.hashed_password != hash_password(req.password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+        
+    access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+    return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
 
 @router.get("/nonce")
 def get_nonce(
@@ -50,9 +96,6 @@ def get_nonce(
     nonce = secrets.token_hex(16)
     
     if not user:
-        # Create user if not exists (lazy creation)
-        # Or we can just return nonce and create user on login
-        # Let's create user placeholder now
         user = User(wallet_address=address, nonce=nonce)
         db.add(user)
     else:
@@ -77,24 +120,20 @@ def login_with_wallet(
     
     try:
         # Verify Signature
-        # 1. Check if nonce is in the message
         if user.nonce not in req.message:
             raise HTTPException(status_code=400, detail="Nonce mismatch in message")
         
-        # 2. Recover address from signature
         message_hash = encode_defunct(text=req.message)
         recovered_address = Account.recover_message(message_hash, signature=req.signature)
         
         if recovered_address.lower() != address:
             raise HTTPException(status_code=401, detail="Invalid signature")
             
-        # 3. Success -> Generate Token
-        # Refresh nonce to prevent replay
         user.nonce = secrets.token_hex(16)
         db.commit()
         
         access_token = create_access_token(data={"sub": str(user.id), "wallet": address})
-        return {"access_token": access_token, "token_type": "bearer"}
+        return {"access_token": access_token, "token_type": "bearer", "user_id": str(user.id)}
         
     except Exception as e:
         print(f"Auth Error: {e}")

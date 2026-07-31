@@ -9,7 +9,8 @@ const backendTarget = process.env.BACKEND_URL || process.env.VITE_BACKEND_URL ||
 export default defineConfig(({ mode }) => ({
   server: {
     host: "0.0.0.0",
-    port: 3200,
+    port: 6400,
+    strictPort: true,
     hmr: {
       overlay: false,
     },

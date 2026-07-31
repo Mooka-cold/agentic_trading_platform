@@ -640,6 +640,7 @@ class Reviewer(BaseAgent):
                     "microstructure_context": json.dumps(state.microstructure or {}, ensure_ascii=False),
                     "execution_constraints": json.dumps(execution_constraints, ensure_ascii=False)
                 },
+                state=state,
                 output_model=RiskVerdict
             )
             

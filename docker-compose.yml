@@ -77,6 +77,8 @@ services:
       - AI_ENGINE_URL=http://ai-engine:8000
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
       - NEWS_API_KEY=${NEWS_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
       - PYTHONPATH=/app:/app/shared
       - TZ=Asia/Shanghai
     depends_on:
@@ -131,6 +133,32 @@ services:
       - ./shared:/app/shared
     networks:
       - ai_trading_net
+
+  # RSSHub — self-hosted RSS generator for JS-rendered sites (Odaily, BlockBeats, PANews, etc.)
+  rsshub:
+    image: diygod/rsshub:latest
+    container_name: ai_trading-rsshub
+    restart: always
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+      CACHE_EXPIRE: "600"
+      REQUEST_TIMEOUT: "10000"
+      REQUEST_RETRY: "2"
+      TZ: Asia/Shanghai
+      # If your proxy is needed for outbound requests, uncomment:
+      # HTTPS_PROXY: http://host.docker.internal:7890
+      # HTTP_PROXY: http://host.docker.internal:7890
+    ports:
+      - "3210:1200"
+    networks:
+      - ai_trading_net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:1200/healthz"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   crawler:
     build:

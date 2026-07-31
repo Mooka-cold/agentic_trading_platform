@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     BACKEND_URL: str = "http://backend:8000"
     AI_ENGINE_URL: str = "http://ai-engine:8000"
     CRAWLER_URL: str = "http://crawler:8000"
+    
+    # API Proxy
+    MARKET_API_BASE_URL: str = "https://www.okx.com"
+    HTTP_PROXY: str = ""
+    HTTPS_PROXY: str = ""
 
     # Risk Management
     RISK_TRAILING_STOP_PCT: float = 0.02
@@ -72,10 +77,12 @@ class Settings(BaseSettings):
 
     # Workflow Config
     WORKFLOW_LOOP_INTERVAL: int = 540 # 9 minutes
+    SESSION_RETENTION_DAYS: int = 7 # Number of days to keep completed/rejected sessions
     LLM_TIMEOUT_SECONDS: int = 60
     REVIEW_INTERVALS: list[int] = [1, 6, 24]
     CALIBRATION_SYMBOL: str = "ETH/USDT"
     CALIBRATION_WINDOW_DAYS: int = 14
+    SESSION_RETENTION_DAYS: int = 7
 
     model_config = SettingsConfigDict(env_file=find_env_file(), case_sensitive=True, extra="ignore")
 

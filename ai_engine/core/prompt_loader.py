@@ -10,11 +10,11 @@ class PromptRegistry:
         self.base_path = Path(__file__).parent.parent / prompt_dir
         self._cache = {}
 
-    def get_agent_prompt(self, agent_name: str, user_variant: str = "default") -> ChatPromptTemplate:
+    def get_agent_prompt(self, agent_name: str, user_variant: str = "default", system_prompt_override: str = None) -> ChatPromptTemplate:
         """
         Loads a system prompt and injects user configuration.
         """
-        cache_key = f"{agent_name}:{user_variant}"
+        cache_key = f"{agent_name}:{user_variant}:{hash(system_prompt_override)}"
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -29,7 +29,13 @@ class PromptRegistry:
         if '_type' not in system_config or system_config['_type'] != 'prompt':
              raise ValueError(f"Invalid prompt config in {system_path}")
 
+        # 1.5 Inject User Override if provided
         system_template = system_config['template']
+        if system_prompt_override:
+            # We append the user override at the end or replace completely?
+            # Safer to append as "User Specific Rules:" so we don't break system contracts
+            system_template = f"{system_template}\n\n# User Specific Rules:\n{system_prompt_override}"
+            
         input_variables = system_config.get("input_variables")
         if not isinstance(input_variables, list) or not all(isinstance(v, str) for v in input_variables):
             raise ValueError(f"Invalid input_variables in {system_path}")

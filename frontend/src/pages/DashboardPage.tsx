@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Panel, MetricCard, StatusBadge } from '@/components/shared/StatusBadge';
-import { fetchMarketKline, fetchMarketTicker, fetchNews, fetchSecondSeries, fetchSentimentDashboard, fetchSentimentInterpretations, solidifyMarketRollups } from '@/data/api';
+import { fetchMarketKline, fetchMarketTicker, fetchNews, fetchSecondSeries, fetchSentimentInterpretations, solidifyMarketRollups } from '@/data/api';
 import { Activity, Newspaper, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -83,35 +83,9 @@ type NewsInterpretationItem = {
     horizon: string;
     reason: string;
   }>;
+  asset_mentions?: string[];
 };
 
-type SentimentWindowScore = {
-  market: string;
-  label: string;
-  score: number;
-  bias: string;
-  sample_count: number;
-};
-
-type SentimentWindowSummary = {
-  label: string;
-  start_at: string;
-  end_at: string;
-  scores: SentimentWindowScore[];
-};
-
-type SentimentDashboardData = {
-  markets: Array<{ key: string; label: string }>;
-  current_hour: SentimentWindowSummary;
-  rolling_6h: SentimentWindowSummary;
-  rolling_24h: SentimentWindowSummary;
-  chart: Array<{
-    bucket_start: string;
-    bucket_end: string;
-    label: string;
-    markets: Record<string, { hourly: number; rolling6h: number; rolling24h: number }>;
-  }>;
-} | null;
 
 type ChartMode = 'kline' | 'seconds' | 'overlay';
 const MARKET_LABELS: Record<string, string> = {
@@ -134,22 +108,20 @@ export default function DashboardPage() {
   const [ticker, setTicker] = useState<TickerItem | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [interpretations, setInterpretations] = useState<NewsInterpretationItem[]>([]);
-  const [sentimentDashboard, setSentimentDashboard] = useState<SentimentDashboardData>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [usingSecondFallback, setUsingSecondFallback] = useState(false);
   const [chartMode, setChartMode] = useState<ChartMode>('kline');
-  const [selectedSentimentMarket, setSelectedSentimentMarket] = useState('CRYPTO');
 
   const refresh = async () => {
     setLoading(true);
     setError(null);
     setUsingSecondFallback(false);
-    const [klineResult, tickerResult, newsResult, interpretationsResult, sentimentDashboardResult] = await Promise.allSettled([
+    const [klineResult, tickerResult, newsResult, interpretationsResult] = await Promise.allSettled([
       fetchMarketKline(symbol, interval, 120),
       fetchMarketTicker(symbol, 10),
       fetchNews(20),
-      fetchSentimentInterpretations(symbol, 40, 'all'),
-      fetchSentimentDashboard(symbol),
+      fetchSentimentInterpretations(symbol, 40, 'all')
     ]);
 
     const failedModules: string[] = [];
@@ -182,13 +154,6 @@ export default function DashboardPage() {
     } else {
       setInterpretations([]);
       failedModules.push('LLM解读');
-    }
-
-    if (sentimentDashboardResult.status === 'fulfilled') {
-      setSentimentDashboard(sentimentDashboardResult.value || null);
-    } else {
-      setSentimentDashboard(null);
-      if (!failedModules.includes('LLM解读')) failedModules.push('LLM解读');
     }
 
     let secondSeriesPoints: SecondSeriesPoint[] = [];
@@ -359,31 +324,20 @@ export default function DashboardPage() {
         t: formatTimeCN(item.time * 1000),
       }));
   }, [kline, secondSeries]);
-  const sentimentChartData = useMemo(
-    () =>
-      (sentimentDashboard?.chart || []).map((point) => ({
-        label: point.label,
-        hourly: point.markets?.[selectedSentimentMarket]?.hourly ?? 0,
-        rolling6h: point.markets?.[selectedSentimentMarket]?.rolling6h ?? 0,
-        rolling24h: point.markets?.[selectedSentimentMarket]?.rolling24h ?? 0,
-      })),
-    [selectedSentimentMarket, sentimentDashboard],
+  const pendingNews = useMemo(
+    () => news.filter((item) => !interpretationMap.has(String(item.id))),
+    [interpretationMap, news],
   );
 
-  useEffect(() => {
-    const available = sentimentDashboard?.markets || [];
-    if (!available.length) return;
-    if (!available.some((item) => item.key === selectedSentimentMarket)) {
-      setSelectedSentimentMarket(available[0].key);
-    }
-  }, [selectedSentimentMarket, sentimentDashboard]);
-
-  const latestNewsRows = useMemo(
+  const interpretedNews = useMemo(
     () =>
-      news.slice(0, 12).map((item) => ({
-        news: item,
-        interpretation: interpretationMap.get(String(item.id)),
-      })),
+      news
+        .filter((item) => interpretationMap.has(String(item.id)))
+        .map((item) => ({
+          news: item,
+          interpretation: interpretationMap.get(String(item.id))!,
+        }))
+        .sort((a, b) => new Date(b.news.published_at).getTime() - new Date(a.news.published_at).getTime()),
     [interpretationMap, news],
   );
 
@@ -604,203 +558,178 @@ export default function DashboardPage() {
         </div>
       </Panel>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4">
         <Panel title="Latest News" actions={<Newspaper className="h-4 w-4 text-muted-foreground" />}>
-          <div className="space-y-2 max-h-[520px] overflow-auto">
-            {latestNewsRows.map(({ news: item, interpretation }) => (
-              <div key={item.id} className="grid gap-0 rounded-md border border-border md:grid-cols-2">
-                <a
-                  href={item.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block space-y-2 p-3 transition-colors hover:bg-secondary/20"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-medium text-foreground line-clamp-2">{item.title}</p>
-                    <StatusBadge status={item.sentiment === 'negative' ? 'critical' : item.sentiment === 'positive' ? 'info' : 'warning'} />
-                  </div>
-                  <p className="text-xs text-muted-foreground line-clamp-2">{item.summary || '无摘要'}</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {item.source} · {formatDateTimeCN(item.published_at)}
-                  </p>
-                </a>
-                <div className="space-y-2 border-t border-border p-3 md:border-l md:border-t-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">LLM Summary</p>
-                    <div className="flex items-center gap-2">
-                      {interpretation && (
-                        <span className={cn('rounded border px-2 py-0.5 text-[10px] font-mono', severityClass(interpretation.severity))}>
-                          {severityLabel(interpretation.severity)}
-                        </span>
-                      )}
-                      {interpretation && (
-                        <span className={cn('rounded border px-2 py-0.5 text-[10px] font-mono', finalStatusClass(interpretation.final_status))}>
-                          {finalStatusLabel(interpretation.final_status)}
-                        </span>
-                      )}
-                      <span className="text-[11px] text-muted-foreground">
-                        {interpretation ? `${(interpretation.confidence * 100).toFixed(0)}%` : '待解读'}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-sm text-foreground leading-relaxed">
-                    {interpretation?.summary_cn || '这条新闻尚未完成逐条解读。'}
-                  </p>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
-                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Source Context</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                          {interpretation ? languageLabel(interpretation.language) : '待识别语言'}
-                        </span>
-                        <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                          {interpretation ? sourceTierLabel(interpretation.source_tier) : '待识别来源层级'}
-                        </span>
+          <div className="flex flex-col gap-6 max-h-[520px] overflow-auto">
+            {pendingNews.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 sticky top-0 bg-card z-10 py-1">
+                  <div className="h-2 w-2 rounded-full bg-warning" />
+                  <h3 className="text-xs font-mono font-bold text-foreground uppercase tracking-wider">待解读 ({pendingNews.length})</h3>
+                </div>
+                <div className="grid gap-2">
+                  {pendingNews.map((item) => (
+                    <a
+                      key={item.id}
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block space-y-2 rounded-md border border-border p-3 transition-colors hover:bg-secondary/20"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground line-clamp-2">{item.title}</p>
+                        <StatusBadge status={item.sentiment === 'negative' ? 'critical' : item.sentiment === 'positive' ? 'info' : 'warning'} />
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(interpretation?.cross_market_impacts || []).slice(0, 2).map((impact, idx) => (
-                          <span
-                            key={`${impact.market}-${idx}`}
-                            className={cn(
-                              'rounded border px-2 py-0.5 text-[10px] font-mono',
-                              impact.direction === 'bullish'
-                                ? 'border-success/30 bg-success/10 text-success'
-                                : impact.direction === 'bearish'
-                                  ? 'border-danger/30 bg-danger/10 text-danger'
-                                  : 'border-border bg-secondary/20 text-muted-foreground',
-                            )}
-                          >
-                            {MARKET_LABELS[impact.market] || impact.market} {impact.direction === 'bullish' ? '利好' : impact.direction === 'bearish' ? '利空' : '中性'}
-                          </span>
-                        ))}
-                        {!!(interpretation?.cross_market_impacts || []).length && (interpretation?.cross_market_impacts || []).length > 2 && (
-                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                            +{(interpretation?.cross_market_impacts || []).length - 2}
-                          </span>
-                        )}
-                        {!(interpretation?.cross_market_impacts || []).length && (
-                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                            暂无跨市场归因
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
-                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Noise Flags</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {(interpretation?.noise_flags || []).slice(0, 2).map((flag) => (
-                          <span key={flag} className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                            {noiseFlagLabel(flag)}
-                          </span>
-                        ))}
-                        {!!(interpretation?.noise_flags || []).length && (interpretation?.noise_flags || []).length > 2 && (
-                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                            +{(interpretation?.noise_flags || []).length - 2}
-                          </span>
-                        )}
-                        {!(interpretation?.noise_flags || []).length && (
-                          <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
-                            无明显噪声
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Evidence</p>
-                      {!!(interpretation?.evidence_quotes || []).length && (interpretation?.evidence_quotes || []).length > 1 && (
-                        <span className="text-[10px] font-mono text-muted-foreground">+{(interpretation?.evidence_quotes || []).length - 1} 条</span>
-                      )}
-                    </div>
-                    {(interpretation?.evidence_quotes || []).slice(0, 1).map((quote, idx) => (
-                      <p key={idx} className="rounded border border-border bg-background/60 px-2 py-1 text-xs text-muted-foreground line-clamp-2">
-                        “{quote}”
+                      <p className="text-[11px] text-muted-foreground">
+                        {item.source} · {formatDateTimeCN(item.published_at)}
                       </p>
-                    ))}
-                    {!(interpretation?.evidence_quotes || []).length && (
-                      <p className="text-xs text-muted-foreground">暂无证据引用</p>
-                    )}
-                  </div>
+                    </a>
+                  ))}
                 </div>
               </div>
-            ))}
-            {!latestNewsRows.length && <div className="text-sm text-muted-foreground">暂无新闻数据</div>}
-          </div>
-        </Panel>
+            )}
 
-        <Panel title="LLM 解读" actions={<Activity className="h-4 w-4 text-muted-foreground" />}>
-          {sentimentDashboard ? (
-            <div className="space-y-3">
-              {[
-                { title: '最近 1 个自然小时', window: sentimentDashboard.current_hour },
-                { title: '最近 6 个自然小时', window: sentimentDashboard.rolling_6h },
-                { title: '最近 24 个自然小时', window: sentimentDashboard.rolling_24h },
-              ].map(({ title, window }) => (
-                <div key={title} className="rounded-md border border-border p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">{title}</span>
-                    <span className="text-[11px] text-muted-foreground">{window.label}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-                    {window.scores.map((score) => (
-                      <div key={score.market} className="rounded border border-border bg-secondary/10 p-2">
-                        <div className="text-[11px] text-muted-foreground">{score.label}</div>
-                        <div className={cn('mt-1 text-lg font-mono font-bold', scoreColorClass(score.score))}>
-                          {formatScore(score.score)}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground">
-                          {score.score > 1.5 ? '偏多' : score.score < -1.5 ? '偏空' : '中性'} · {score.sample_count} 条
+            {interpretedNews.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 sticky top-0 bg-card z-10 py-1">
+                  <div className="h-2 w-2 rounded-full bg-success" />
+                  <h3 className="text-xs font-mono font-bold text-foreground uppercase tracking-wider">已解读时间线 ({interpretedNews.length})</h3>
+                </div>
+                <div className="relative border-l-2 border-border ml-2 pl-4 space-y-4">
+                  {interpretedNews.map(({ news: item, interpretation }) => (
+                    <div key={item.id} className="relative">
+                      {/* Timeline dot */}
+                      <div className="absolute -left-[23px] top-4 h-3 w-3 rounded-full border-2 border-background bg-success"></div>
+                      
+                      <div className="grid gap-0 rounded-md border border-border md:grid-cols-2">
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block space-y-2 p-3 transition-colors hover:bg-secondary/20"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium text-foreground line-clamp-2">{item.title}</p>
+                            <StatusBadge status={item.sentiment === 'negative' ? 'critical' : item.sentiment === 'positive' ? 'info' : 'warning'} />
+                          </div>
+                          <p className="text-xs text-muted-foreground line-clamp-2">{item.summary || '无摘要'}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {item.source} · {formatDateTimeCN(item.published_at)}
+                          </p>
+                        </a>
+                        <div className="space-y-2 border-t border-border p-3 md:border-l md:border-t-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">LLM Summary</p>
+                            <div className="flex items-center gap-2">
+                              <span className={cn('rounded border px-2 py-0.5 text-[10px] font-mono', severityClass(interpretation.severity))}>
+                                {severityLabel(interpretation.severity)}
+                              </span>
+                              <span className={cn('rounded border px-2 py-0.5 text-[10px] font-mono', finalStatusClass(interpretation.final_status))}>
+                                {finalStatusLabel(interpretation.final_status)}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground">
+                                {(interpretation.confidence * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-sm text-foreground leading-relaxed">
+                            {interpretation.summary_cn || '这条新闻尚未完成逐条解读。'}
+                          </p>
+                          {interpretation.asset_mentions && interpretation.asset_mentions.length > 0 && (
+                            <div className="flex gap-1.5 mt-2 flex-wrap">
+                              {interpretation.asset_mentions.map((asset: string, i: number) => (
+                                <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                                  {asset}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
+                              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Source Context</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                  {languageLabel(interpretation.language)}
+                                </span>
+                                <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                  {sourceTierLabel(interpretation.source_tier)}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {(interpretation.cross_market_impacts || []).slice(0, 2).map((impact, idx) => (
+                                  <span
+                                    key={`${impact.market}-${idx}`}
+                                    className={cn(
+                                      'rounded border px-2 py-0.5 text-[10px] font-mono',
+                                      impact.direction === 'bullish'
+                                        ? 'border-success/30 bg-success/10 text-success'
+                                        : impact.direction === 'bearish'
+                                          ? 'border-danger/30 bg-danger/10 text-danger'
+                                          : 'border-border bg-secondary/20 text-muted-foreground',
+                                    )}
+                                  >
+                                    {MARKET_LABELS[impact.market] || impact.market} {impact.direction === 'bullish' ? '利好' : impact.direction === 'bearish' ? '利空' : '中性'}
+                                  </span>
+                                ))}
+                                {!!(interpretation.cross_market_impacts || []).length && (interpretation.cross_market_impacts || []).length > 2 && (
+                                  <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                    +{(interpretation.cross_market_impacts || []).length - 2}
+                                  </span>
+                                )}
+                                {!(interpretation.cross_market_impacts || []).length && (
+                                  <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                    暂无跨市场归因
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
+                              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Noise Flags</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {(interpretation.noise_flags || []).slice(0, 2).map((flag) => (
+                                  <span key={flag} className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                    {noiseFlagLabel(flag)}
+                                  </span>
+                                ))}
+                                {!!(interpretation.noise_flags || []).length && (interpretation.noise_flags || []).length > 2 && (
+                                  <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                    +{(interpretation.noise_flags || []).length - 2}
+                                  </span>
+                                )}
+                                {!(interpretation.noise_flags || []).length && (
+                                  <span className="rounded border border-border bg-secondary/20 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                    无明显噪声
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="space-y-1 rounded border border-border bg-secondary/10 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Evidence</p>
+                              {!!(interpretation.evidence_quotes || []).length && (interpretation.evidence_quotes || []).length > 1 && (
+                                <span className="text-[10px] font-mono text-muted-foreground">+{(interpretation.evidence_quotes || []).length - 1} 条</span>
+                              )}
+                            </div>
+                            {(interpretation.evidence_quotes || []).slice(0, 1).map((quote, idx) => (
+                              <p key={idx} className="rounded border border-border bg-background/60 px-2 py-1 text-xs text-muted-foreground line-clamp-2">
+                                “{quote}”
+                              </p>
+                            ))}
+                            {!(interpretation.evidence_quotes || []).length && (
+                              <p className="text-xs text-muted-foreground">暂无证据引用</p>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-
-              <div className="rounded-md border border-border p-3">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
-                    情绪曲线 · {MARKET_LABELS[selectedSentimentMarket] || selectedSentimentMarket}
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(sentimentDashboard.markets || []).map((market) => (
-                      <button
-                        key={market.key}
-                        onClick={() => setSelectedSentimentMarket(market.key)}
-                        className={cn(
-                          'rounded border px-2 py-1 text-[11px] font-mono transition-colors',
-                          selectedSentimentMarket === market.key
-                            ? 'border-primary bg-primary/10 text-primary'
-                            : 'border-border text-muted-foreground hover:text-foreground',
-                        )}
-                      >
-                        {market.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={sentimentChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={16} />
-                      <YAxis domain={[-10, 10]} tick={{ fontSize: 11 }} width={48} />
-                      <Tooltip
-                        contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
-                        labelStyle={{ color: 'hsl(var(--foreground))' }}
-                      />
-                      <Line type="monotone" dataKey="hourly" name="1H" stroke="#38bdf8" dot={false} strokeWidth={2} />
-                      <Line type="monotone" dataKey="rolling6h" name="6H" stroke="#22c55e" dot={false} strokeWidth={2} />
-                      <Line type="monotone" dataKey="rolling24h" name="24H" stroke="#f59e0b" dot={false} strokeWidth={2} />
-                    </ComposedChart>
-                  </ResponsiveContainer>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">暂无LLM解读结果</div>
-          )}
+            )}
+            
+            {!pendingNews.length && !interpretedNews.length && <div className="text-sm text-muted-foreground">暂无新闻数据</div>}
+          </div>
         </Panel>
       </div>
     </div>

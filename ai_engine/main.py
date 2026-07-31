@@ -35,8 +35,9 @@ async def _restore_loop_state():
             config = json.loads(config_str)
             symbol = config.get("symbol", DEFAULT_SYMBOL)
             session_id = config.get("session_id") or f"restored-{int(time.time())}"
+            user_id = config.get("user_id", "default")
             print(f"Restoring active loop for {symbol}...")
-            await workflow_engine.start_loop(symbol, session_id)
+            await workflow_engine.start_loop(symbol, session_id, user_id)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -63,6 +64,8 @@ app.add_middleware(
 class AnalysisRequest(BaseModel):
     symbol: str
     session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    trigger_context: Optional[Dict[str, Any]] = None
     market_context: Optional[str] = None
     news_context: Optional[str] = None
 
@@ -126,11 +129,7 @@ async def run_sentiment_interpreter(background_tasks: BackgroundTasks, req: Opti
     background_tasks.add_task(_run)
     return {"status": "triggered"}
 
-@app.get("/sentiment/aggregate")
-async def get_sentiment_aggregate(symbol: str = DEFAULT_SYMBOL):
-    from services.sentiment import sentiment_service
-    fng = await sentiment_service.get_fear_greed_index() or {"value": 50}
-    return sentiment_service.aggregate_interpreted_news(symbol, fng)
+
 
 @app.get("/sentiment/interpretations")
 async def get_sentiment_interpretations(symbol: str = DEFAULT_SYMBOL, limit: int = 20, scope: str = "symbol"):
@@ -139,10 +138,7 @@ async def get_sentiment_interpretations(symbol: str = DEFAULT_SYMBOL, limit: int
     safe_scope = "all" if str(scope).lower() == "all" else "symbol"
     return sentiment_service.get_recent_interpretations(target_symbol=symbol, limit=safe_limit, scope=safe_scope)
 
-@app.get("/sentiment/dashboard")
-async def get_sentiment_dashboard(symbol: str = DEFAULT_SYMBOL):
-    from services.sentiment import sentiment_service
-    return sentiment_service.get_sentiment_dashboard(target_symbol=symbol)
+
 
 @app.get("/sentiment/monitor")
 async def get_sentiment_monitor(hours: int = 24):
@@ -169,22 +165,24 @@ async def run_workflow_endpoint(req: AnalysisRequest):
     Start or Update Continuous Workflow Loop
     """
     session_id = req.session_id or workflow_engine.latest_config.get("session_id") or f"continuous-{int(time.time())}"
+    user_id = req.user_id or "default"
     # Start loop (or update config if running)
-    await workflow_engine.start_loop(req.symbol, session_id)
+    await workflow_engine.start_loop(req.symbol, session_id, user_id)
     return {"status": "started", "session_id": session_id, "mode": "continuous"}
 
 @app.post("/workflow/trigger")
 async def trigger_workflow_endpoint(req: AnalysisRequest):
     """
-    Force trigger a workflow cycle (e.g. from Watcher).
+    Force trigger a workflow cycle (e.g. from Trigger Engine).
     Skips if engine is busy.
     """
     import time
     session_id = req.session_id or f"trigger-{int(time.time())}"
+    user_id = req.user_id or "default"
     
-    # Run in background
-    asyncio.create_task(workflow_engine.run_workflow(req.symbol, session_id))
-    return {"status": "triggered", "session_id": session_id}
+    # Run in background, passing user_id to orchestrator
+    asyncio.create_task(workflow_engine.run_workflow(req.symbol, session_id, user_id=user_id, trigger_context=req.trigger_context))
+    return {"status": "triggered", "session_id": session_id, "user_id": user_id}
 
 @app.post("/workflow/review/periodic")
 async def trigger_periodic_review():

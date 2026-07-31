@@ -23,14 +23,6 @@ class BaseAgent:
         self.redis_client = redis.from_url(REDIS_URL, decode_responses=True)
         self.logger = logging.getLogger(f"agent.{agent_id}")
         self.output_language = self._load_output_language()
-        
-        # Initialize LLM
-        self.llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
-            openai_api_key=settings.OPENAI_API_KEY,
-            openai_api_base=settings.OPENAI_API_BASE,
-            temperature=0.2
-        )
 
     async def run(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -138,28 +130,91 @@ class BaseAgent:
             return default_lang
         return default_lang
 
-    async def call_llm(self, prompt_vars: Dict[str, Any], output_model: type = None, prompt_name: str = None) -> Any:
+    async def call_llm(self, prompt_vars: Dict[str, Any], state: AgentState = None, output_model: type = None, prompt_name: str = None, extra_preamble: str = None) -> Any:
         """
         Loads the agent's prompt, injects variables, and calls the LLM.
+
+        If `extra_preamble` is provided, it is appended to the system template
+        AFTER loading the persona's normal prompt. This is used by Decision
+        Agents in debate mode to inject a debate-specific output contract
+        without having to mutate the persona YAMLs.
         """
         target_prompt = prompt_name if prompt_name else self.agent_id
-        prompt = registry.get_agent_prompt(target_prompt)
-        
+
+        system_prompt_override = None
+        if state and state.custom_prompts:
+            system_prompt_override = state.custom_prompts.get(target_prompt)
+
+        try:
+            prompt = registry.get_agent_prompt(target_prompt, system_prompt_override=system_prompt_override)
+        except FileNotFoundError:
+            # Fallback to dynamic prompt if file doesn't exist
+            from langchain_core.prompts import ChatPromptTemplate
+            template = system_prompt_override if system_prompt_override else f"You are a trading agent ({target_prompt})."
+            prompt = ChatPromptTemplate.from_template(template)
+
         # Add format instructions if output model is provided
         parser = None
         if output_model:
             parser = JsonOutputParser(pydantic_object=output_model)
-        
+            # Ensure format instructions are added if it's a dynamic template
+            if "format_instructions" not in prompt.input_variables and "{format_instructions}" not in prompt.messages[0].prompt.template:
+                prompt.messages[0].prompt.template += "\n\n{format_instructions}"
+
+        # Inject extra preamble by wrapping template if needed.
+        # This lets Decision agents in debate mode keep the persona's
+        # tone and philosophy while gaining a strict debate output contract.
+        if extra_preamble:
+            try:
+                prompt.messages[0].prompt.template = prompt.messages[0].prompt.template + "\n\n" + extra_preamble
+                if "{format_instructions}" not in prompt.messages[0].prompt.template and parser:
+                    prompt.messages[0].prompt.template += "\n\n{format_instructions}"
+            except Exception:
+                # If the prompt doesn't support mutation, fall through
+                pass
+
         merged_vars = {**prompt_vars, "output_language": self.output_language}
+        if parser:
+            merged_vars["format_instructions"] = parser.get_format_instructions()
+            
         prompt_value = await prompt.ainvoke(merged_vars)
-        messages = list(prompt_value.to_messages())
+        
+        # 提取 user_id
+        user_id = "default"
+        if state and state.user_id:
+            user_id = state.user_id
+            
         language_guardrail = (
             f"Language requirement: all explanatory and narrative text must be in {self.output_language}. "
             "Keep JSON field names and enum tokens in English unless prompt explicitly requires otherwise."
         )
-        messages.insert(0, SystemMessage(content=language_guardrail))
-        response = await asyncio.wait_for(self.llm.ainvoke(messages), timeout=settings.LLM_TIMEOUT_SECONDS)
+        
+        # 构造网关请求 Payload
+        raw_messages = [{"role": "system", "content": language_guardrail}]
+        for msg in prompt_value.to_messages():
+            role = "system" if isinstance(msg, SystemMessage) else "user"
+            raw_messages.append({"role": role, "content": str(msg.content)})
+            
+        payload = {
+            "user_id": user_id,
+            "messages": raw_messages
+        }
+        
+        # Call LLM Gateway
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(f"{settings.BACKEND_URL}/api/v1/system/llm/invoke", json=payload)
+            if resp.status_code != 200:
+                raise Exception(f"LLM Gateway failed: {resp.text}")
+            resp_data = resp.json()
+            content = resp_data.get("content", "")
+            
         if parser:
-            content = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
-            return parser.parse(content)
-        return response
+            parsed_dict = parser.parse(content)
+            if output_model:
+                return output_model(**parsed_dict)
+            return parsed_dict
+        
+        class DummyResponse:
+            def __init__(self, content):
+                self.content = content
+        return DummyResponse(content)

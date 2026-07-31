@@ -21,6 +21,10 @@ RSS_SOURCES = {
     "Bitcoin Magazine": "https://bitcoinmagazine.com/.rss/full/",
     "Decrypt": "https://decrypt.co/feed",
     "Chainalysis": "https://blog.chainalysis.com/feed/",
+    # ── Chinese localization sources (RSS) ──
+    # Odaily/BlockBeats/PANews are Next.js CSR apps without public RSS.
+    # Odaily is handled by fetch_odaily_news() below (self.__next_f.push extraction).
+    # BlockBeats/PANews require browser rendering (Puppeteer/Playwright) — deferred.
 }
 
 TECHFLOW_SOURCES = [
@@ -212,6 +216,29 @@ class NewsCrawler:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def health_check_sources(self) -> dict:
+        """
+        Ping every RSS source and report reachability. Called periodically by
+        the scheduler to keep `system_configs.NEWS_SOURCE_HEALTH` up to date.
+        The AI Engine's sentiment service reads this to weight or skip dead feeds.
+        """
+        results = {}
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            for name, url in RSS_SOURCES.items():
+                try:
+                    resp = await client.head(url)
+                    results[name] = {
+                        "status": "ok" if resp.status_code < 400 else f"http_{resp.status_code}",
+                        "checked_at": datetime.utcnow().isoformat(),
+                    }
+                except Exception as exc:
+                    results[name] = {
+                        "status": "down",
+                        "error": str(exc)[:120],
+                        "checked_at": datetime.utcnow().isoformat(),
+                    }
+        return results
+
     async def sync_newsapi(self):
         if not settings.NEWS_API_KEY:
             return
@@ -274,7 +301,8 @@ class NewsCrawler:
             "public": "true",
         }
         async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get("https://cryptopanic.com/api/developer/v2/posts/", params=params)
+            # CryptoPanic v2 API 已废弃，改用 v1
+            resp = await client.get("https://cryptopanic.com/api/v1/posts/", params=params)
             if resp.status_code != 200:
                 print(f"CryptoPanic error: {resp.status_code} {resp.text}")
                 return
@@ -414,6 +442,100 @@ class NewsCrawler:
             db.close()
         return total
 
+    async def fetch_odaily_news(self):
+        """
+        Odaily is a Next.js CSR app — no RSS, no usable public API.
+        We extract news from the self.__next_f.push SSR payload embedded in the HTML.
+        """
+        total = 0
+        db = SessionLocalUser()
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+            resp = await httpx.AsyncClient(timeout=12.0, follow_redirects=True).get('https://www.odaily.news', headers=headers)
+            html = resp.text
+
+            # Extract __next_f.push blocks containing initData
+            push_blocks = re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)', html, re.DOTALL)
+            items = []
+            for block in push_blocks:
+                block = block.replace('\\"', '"').replace('\\\\', '\\')
+                m = re.search(r'\d+:\["\$","[^"]+",null,(\{.*\})', block)
+                if not m:
+                    continue
+                try:
+                    data = json.loads(m.group(1))
+                except json.JSONDecodeError:
+                    continue
+                init = data.get('initData', {})
+                # newsflashList = short news flashes; infoFlowList = longer articles
+                for src_key in ['newsflashList', 'infoFlowList']:
+                    for entry in init.get(src_key, []):
+                        title = entry.get('title', '').strip()
+                        if not title or len(title) < 6:
+                            continue
+                        desc = entry.get('description', '') or entry.get('summary', '') or ''
+                        # Build URL from entityType/entityId
+                        eid = entry.get('entityId') or entry.get('id')
+                        etype = entry.get('entityType', 0)
+                        if src_key == 'newsflashList':
+                            url = f'https://www.odaily.news/newsflash/{eid}' if eid else ''
+                        else:
+                            url = f'https://www.odaily.news/post/{eid}' if eid else ''
+                        # Parse timestamp
+                        ts = entry.get('publishTimestamp') or entry.get('publishedTime')
+                        # Odaily timestamps are in CST (UTC+8) but stored as epoch ms
+                        # without timezone info. We treat them as CST and convert to UTC.
+                        published_at = datetime.utcnow()
+                        if ts:
+                            try:
+                                if isinstance(ts, (int, float)):
+                                    # Epoch ms → UTC naive
+                                    published_at = datetime.utcfromtimestamp(ts / 1000 if ts > 1e12 else ts)
+                                elif isinstance(ts, str):
+                                    published_at = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                            except Exception:
+                                pass
+                        # Clamp to now (avoid future timestamps from timezone confusion)
+                        if published_at > datetime.utcnow():
+                            published_at = datetime.utcnow()
+                        items.append({
+                            'title': title,
+                            'summary': desc[:500],
+                            'url': url,
+                            'source': 'Odaily',
+                            'published_at': published_at,
+                        })
+
+            # Deduplicate by title+date
+            existing = db.query(News.title, News.published_at).filter(News.source == 'Odaily').all()
+            existing_keys = {f"{clean_title(r[0])}|{r[1].strftime('%Y-%m-%d %H:%M')}" for r in existing}
+            def clean_title(t):
+                return re.sub(r'\s+', ' ', t).strip()
+
+            for item in items:
+                key = f"{clean_title(item['title'])}|{item['published_at'].strftime('%Y-%m-%d %H:%M')}"
+                if key in existing_keys:
+                    continue
+                db.add(News(
+                    title=item['title'],
+                    summary=item['summary'],
+                    url=item['url'],
+                    source=item['source'],
+                    published_at=item['published_at'],
+                    sentiment='neutral',
+                ))
+                total += 1
+            if total > 0:
+                db.commit()
+        except Exception as exc:
+            print(f"Odaily sync failed: {exc}")
+            db.rollback()
+        finally:
+            db.close()
+        return total
+
     async def sync_news(self):
         await self.sync_rss()
         await self.sync_newsapi()
+        await self.sync_cryptopanic()
+        await self.fetch_odaily_news()

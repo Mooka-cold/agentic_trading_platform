@@ -783,38 +783,14 @@ class SentimentService:
         rows = self.load_interpreted_news(target_symbol=target_symbol, limit=limit, lookback_hours=48, filter_by_symbol=filter_by_symbol)
         result: List[Dict[str, Any]] = []
         for row in rows:
-            evidence_quotes = row.get("evidence_quotes") or []
-            final_status = row.get("final_status")
-            severity = row.get("severity")
-            confidence = float(row.get("confidence") or 0.0)
-            magnitude = float(row.get("magnitude") or 0.0)
-            if not evidence_quotes:
-                final_status = "insufficient_evidence"
-                if str(severity or "").lower() in {"high", "critical"}:
-                    severity = "medium"
-                confidence = min(confidence, 0.40)
-                magnitude = min(magnitude, 0.55)
             result.append({
                 "news_id": str(row.get("news_id")),
                 "source": row.get("source"),
                 "published_at": str(row.get("published_at")),
                 "raw_summary": row.get("raw_summary") or "",
-                "language": row.get("language") or "",
-                "source_tier": row.get("source_tier") or "",
-                "bias": row.get("bias"),
-                "magnitude": magnitude,
-                "confidence": confidence,
-                "severity": severity,
-                "final_status": final_status,
-                "summary_cn": row.get("summary_cn"),
-                "assets": row.get("assets") or [],
-                "asset_clusters": row.get("asset_clusters") or [],
-                "factor_tags": row.get("factor_tags") or [],
-                "impact_tags": row.get("impact_tags") or [],
-                "mapping_version": row.get("mapping_version") or self.taxonomy_version,
-                "cross_market_impacts": row.get("cross_market_impacts") or [],
-                "evidence_quotes": evidence_quotes,
-                "noise_flags": row.get("noise_flags") or []
+                "summary_cn": row.get("summary_cn") or "",
+                "asset_mentions": row.get("asset_mentions") or [],
+                "is_noise": row.get("is_noise") or False
             })
         return result
 

@@ -89,6 +89,12 @@ class MarketStreamer:
         import ccxt.async_support as ccxt
         
         exchange = ccxt.binance()
+        if settings.HTTP_PROXY or settings.HTTPS_PROXY:
+            exchange.proxies = {
+                'http': settings.HTTP_PROXY or settings.HTTPS_PROXY,
+                'https': settings.HTTPS_PROXY or settings.HTTP_PROXY,
+            }
+            
         try:
             since = int(last_db_time.timestamp() * 1000)
             
@@ -288,13 +294,27 @@ class MarketStreamer:
         bar = self._to_okx_bar(self.timeframe)
         logger.info(f"🚀 Starting Market Streamer for {self.symbols} @ {self.timeframe}")
         
+        proxies = {}
+        if settings.HTTP_PROXY:
+            proxies["http://"] = settings.HTTP_PROXY
+        if settings.HTTPS_PROXY:
+            proxies["https://"] = settings.HTTPS_PROXY
+            
+        # Use httpx default trust_env=True so system proxies might also work,
+        # but explicit proxies dict overrides it.
+        client_kwargs = {"timeout": 10.0}
+        if proxies:
+            client_kwargs["proxies"] = proxies
+
+        base_url = settings.MARKET_API_BASE_URL.rstrip('/')
+        
         while True:
             try:
                 current_prices = {}
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(**client_kwargs) as client:
                     for symbol in self.symbols:
                         inst_id = self.exchange_symbols.get(symbol, self._to_okx_inst_id(symbol))
-                        url = f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar={bar}&limit=1"
+                        url = f"{base_url}/api/v5/market/candles?instId={inst_id}&bar={bar}&limit=1"
                         try:
                             resp = await client.get(url, timeout=5)
                             data = resp.json()

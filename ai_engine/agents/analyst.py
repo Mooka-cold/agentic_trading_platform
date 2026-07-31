@@ -203,9 +203,9 @@ class Analyst(BaseAgent):
         try:
             # Parallel execution
             # Note: We pass the prompt_name to call_llm
-            t_task = self.call_llm({"technical_data": technical_text}, TrendFollowerOutput, "analyst_trend")
-            m_task = self.call_llm({"technical_data": technical_text}, MeanReversionOutput, "analyst_reversion")
-            v_task = self.call_llm({"technical_data": technical_text}, VolatilityHunterOutput, "analyst_volatility")
+            t_task = self.call_llm({"technical_data": technical_text}, state=state, output_model=TrendFollowerOutput, prompt_name="analyst_trend")
+            m_task = self.call_llm({"technical_data": technical_text}, state=state, output_model=MeanReversionOutput, prompt_name="analyst_reversion")
+            v_task = self.call_llm({"technical_data": technical_text}, state=state, output_model=VolatilityHunterOutput, prompt_name="analyst_volatility")
             
             results = await asyncio.gather(t_task, m_task, v_task, return_exceptions=True)
             
@@ -264,6 +264,7 @@ class Analyst(BaseAgent):
                             "technical_data": technical_text + user_instruction,
                             "sub_agent_reports": sub_agent_reports
                         },
+                        state=state,
                         output_model=AnalystOutput
                     )
                     report = AnalystOutput(**result)

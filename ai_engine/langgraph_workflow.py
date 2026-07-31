@@ -3,14 +3,11 @@ import operator
 from typing import Annotated, Any, Dict, List, TypedDict, Union, Literal
 
 from langgraph.graph import StateGraph, END, START
-from model.state import AgentState, AnalystOutput, SentimentOutput, MacroOutput, OnChainOutput
-from agents import Analyst, Reviewer, Reflector, SentimentAgent
-from agents.bull_strategist import BullStrategist
-from agents.bear_strategist import BearStrategist
-from agents.portfolio_manager import PortfolioManager
-from agents.macro import MacroAgent
-from agents.onchain import OnChainAgent
+from model.state import AgentState
+from agents.generic import GenericMarketAgent, GenericDecisionAgent, GenericArbitratorAgent, GenericRiskAgent
+from agents import Reflector
 from model.policies import OrchestrationConfig
+import asyncio
 
 def reduce_agent_state(left: AgentState | None, right: AgentState | None) -> AgentState:
     """合并 AgentState 的并行更新"""
@@ -22,18 +19,11 @@ def reduce_agent_state(left: AgentState | None, right: AgentState | None) -> Age
     # 这是一个简单的合并策略，假设并行节点修改不同的字段
     # 注意：这修改了 left 对象（原地修改）
     
-    if right.analyst_report:
-        left.analyst_report = right.analyst_report
-    if right.sentiment_report:
-        left.sentiment_report = right.sentiment_report
-    if right.macro_report:
-        left.macro_report = right.macro_report
-    if right.onchain_report:
-        left.onchain_report = right.onchain_report
-    if right.bull_proposal:
-        left.bull_proposal = right.bull_proposal
-    if right.bear_proposal:
-        left.bear_proposal = right.bear_proposal
+    if right.market_reports:
+        left.market_reports.update(right.market_reports)
+    if right.decision_proposals:
+        left.decision_proposals.update(right.decision_proposals)
+        
     if right.strategy_proposal:
         left.strategy_proposal = right.strategy_proposal
     if right.risk_verdict:
@@ -54,11 +44,18 @@ def reduce_agent_state(left: AgentState | None, right: AgentState | None) -> Age
         left.execution_constraints = right.execution_constraints
     if right.unresolved_todos:
         left.unresolved_todos = list({*(left.unresolved_todos or []), *right.unresolved_todos})
-    
+
+    # 辩论 thread：合并所有 turn，按 (round, agent_id) 去重保留最后一条
+    if right.debate_thread:
+        merged = {(t.round, t.agent_id): t for t in (left.debate_thread or [])}
+        for t in right.debate_thread:
+            merged[(t.round, t.agent_id)] = t
+        left.debate_thread = [merged[k] for k in sorted(merged.keys())]
+
     # 简单的版本号/轮次同步
     if right.strategy_revision_round > left.strategy_revision_round:
         left.strategy_revision_round = right.strategy_revision_round
-        
+
     return left
 
 # 定义图状态
@@ -73,207 +70,189 @@ class GraphState(TypedDict):
 
 # --- 节点定义 ---
 
-async def analyst_node(state: GraphState):
-    """分析师节点：执行技术面分析"""
-    agent = Analyst()
-    
-    # 运行 Agent 逻辑
-    updates = await agent.run(state["agent_state"])
-    
-    # 返回一个新的 AgentState 对象，仅包含更新的字段
-    # 这对 reducer 很重要
-    current_state = state["agent_state"]
-    # 创建一个空的 state 对象作为 update payload
-    # 注意：我们不能直接返回 dict，必须返回 AgentState 对象
-    # 因为 reducer 的签名是 (AgentState, AgentState) -> AgentState
-    
-    # 为了避免全量复制带来的混淆，我们可以在 reducer 里只检查特定字段。
-    # 这里我们返回原对象更新后的副本
-    
-    # 实际上，Analyst.run() 返回的是一个 dict
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
-            
-    return {"agent_state": current_state, "completed_analysis": 1}
+async def news_stage_node(state: GraphState):
+    """
+    新闻上下文节点：加载 LLM 压缩后的新闻摘要，注入 state.news_digest。
 
-async def sentiment_node(state: GraphState):
-    """情绪分析节点：执行基本面/新闻分析"""
-    agent = SentimentAgent()
-    updates = await agent.run(state["agent_state"])
-    
-    current_state = state["agent_state"]
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
-            
-    return {"agent_state": current_state, "completed_analysis": 1}
+    这是新闻→压缩→决策链路的最后一环。sentiment_news_interpreter 已把每条原始
+    新闻（100-300 token）压缩为高密度中文摘要（30-60 token），这里只负责把
+    已压缩的结果加载进 state，让 Market/Decision Agent 通过 extra_preamble 消费。
 
-async def macro_node(state: GraphState):
-    """宏观分析节点：执行全球宏观与Risk Regime判断"""
-    agent = MacroAgent()
-    updates = await agent.run(state["agent_state"])
-    
-    current_state = state["agent_state"]
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
-            
-    return {"agent_state": current_state, "completed_analysis": 1}
+    设计要点：
+    - 不做二次 LLM 调用（零额外 token 成本），纯 DB 读取。
+    - 不按 symbol 硬过滤（filter_by_symbol=False），宏观/监管类新闻对策略
+      辩论同样有价值；asset_mentions 已在压缩阶段提取，下游可自行判断相关性。
+    - 失败时降级为空列表，不阻塞主流程（新闻是增强信号，不是硬依赖）。
+    """
+    agent_state = state["agent_state"]
+    try:
+        from services.sentiment import sentiment_service
+        symbol = state.get("symbol") or agent_state.market_data.symbol
+        # 拉取最近 24h 已压缩的新闻，上限 10 条（约 400-600 token，成本可控）
+        items = sentiment_service.load_interpreted_news(
+            target_symbol=symbol,
+            limit=10,
+            lookback_hours=24,
+            filter_by_symbol=False,
+        )
+        # 只保留下游需要的轻量字段，剔除原始 summary 等大字段，进一步控制 token
+        digest = []
+        for it in items:
+            digest.append({
+                "source": it.get("source"),
+                "title": it.get("title"),
+                "summary_cn": it.get("summary_cn"),
+                "asset_mentions": it.get("assets") or it.get("asset_mentions") or [],
+                "is_noise": bool(it.get("noise_flags")),
+                "published_at": str(it.get("published_at") or ""),
+            })
+        agent_state.news_digest = digest
+        print(f"[Graph] News stage: loaded {len(digest)} compressed news items for {symbol}.", flush=True)
+    except Exception as e:
+        # 新闻加载失败不应阻塞交易决策主流程
+        agent_state.news_digest = []
+        print(f"[Graph] News stage degraded (empty digest): {e}", flush=True)
+    return {"agent_state": agent_state}
 
-async def onchain_node(state: GraphState):
-    """链上分析节点：分析资金流向与持仓情绪"""
-    agent = OnChainAgent()
-    updates = await agent.run(state["agent_state"])
-    
-    current_state = state["agent_state"]
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
-            
-    return {"agent_state": current_state, "completed_analysis": 1}
 
-async def bull_strategist_node(state: GraphState):
-    """多头策略师节点"""
-    agent = BullStrategist()
-    updates = await agent.run(state["agent_state"])
+async def market_stage_node(state: GraphState):
+    """行情阶段节点：并行运行所有行情Agent"""
+    agent_state = state["agent_state"]
+    team_config = agent_state.team_config or {}
+    agent_ids = team_config.get("market_agent_ids", [])
+    
+    if not agent_ids:
+        # 新系统要求：用户必须显式在 Agent Studio 配置交易团队。
+        # 旧系统遗留的 default_analyst 兜底已被移除，未配置团队的用户应保持空转。
+        print(f"[Graph] Market stage skipped: no market_agent_ids configured for user.", flush=True)
+        return {"agent_state": state["agent_state"], "completed_analysis": 0}
+        
+    agents = [GenericMarketAgent(aid) for aid in agent_ids]
+    
+    # 并行执行所有行情Agent
+    results = await asyncio.gather(*(agent.run(agent_state) for agent in agents), return_exceptions=True)
     
     current_state = state["agent_state"]
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
+    for res in results:
+        if isinstance(res, dict) and "market_reports" in res:
+            current_state.market_reports.update(res["market_reports"])
+        elif isinstance(res, Exception):
+            print(f"Error in market agent: {res}")
             
+    # Make sure to close Redis connections
+    for agent in agents:
+        await agent.close()
+            
+    return {"agent_state": current_state, "completed_analysis": len(agent_ids)}
+
+async def decision_stage_node(state: GraphState):
+    """
+    策略大师阶段节点：多轮辩论机制 (异人格观点碰撞)
+
+    Round 1: 所有策略 Agent 在同一份原始数据上独立形成 thesis。
+    Round 2: 每个策略 Agent 读到他人的 thesis，产出 rebuttal 与可能的动作调整。
+    Finalizer 在 arbitration 阶段读取完整 debate_thread。
+    """
+    agent_state = state["agent_state"]
+    team_config = agent_state.team_config or {}
+    agent_ids = team_config.get("strategy_agent_ids", [])
+
+    if not agent_ids:
+        # 新系统要求：策略大师需要显式配置；旧 decision_agent_ids 字段已重命名。
+        print(f"[Graph] Strategy stage skipped: no strategy_agent_ids configured for user.", flush=True)
+        return {"agent_state": state["agent_state"]}
+
+    # Number of debate rounds — start with 2 (independent + rebuttal) for v1.
+    # Could be made configurable per user later.
+    total_rounds = 2
+
+    current_state = state["agent_state"]
+    agents = [GenericDecisionAgent(aid) for aid in agent_ids]
+
+    for round_index in range(1, total_rounds + 1):
+        prior_turns = list(current_state.debate_thread)
+        results = await asyncio.gather(
+            *(agent.run_debate_round(current_state, round_index, prior_turns) for agent in agents),
+            return_exceptions=True,
+        )
+
+        for res in results:
+            if isinstance(res, dict) and "debate_turn" in res:
+                turn = res["debate_turn"]
+                current_state.debate_thread.append(turn)
+                # Keep decision_proposals in sync with the LATEST turn of each persona
+                # so the Arbitrator (and downstream Risk Officer) can read what each
+                # persona currently believes after all rebuttal rounds.
+                latest = current_state.decision_proposals.get(turn.agent_id)
+                if latest is None or turn.confidence >= 0:
+                    # Convert the DebateTurn into a StrategyProposal-shaped object
+                    # so existing serialization paths keep working.
+                    from model.state import StrategyProposal
+                    current_state.decision_proposals[turn.agent_id] = StrategyProposal(
+                        action=turn.action,
+                        order_type="MARKET",
+                        reasoning=turn.thesis + (" | Rebuttals: " + " | ".join(turn.rebuttals) if turn.rebuttals else ""),
+                        confidence=turn.confidence,
+                        assumptions=[],
+                        decision_rationale_compact=[turn.thesis] + turn.rebuttals,
+                        failure_conditions=[],
+                    )
+            elif isinstance(res, Exception):
+                print(f"Error in strategy agent (round {round_index}): {res}", flush=True)
+
+    for agent in agents:
+        await agent.close()
+
     return {"agent_state": current_state}
 
-async def bear_strategist_node(state: GraphState):
-    """空头策略师节点"""
-    agent = BearStrategist()
-    updates = await agent.run(state["agent_state"])
-    
+async def arbitration_stage_node(state: GraphState):
+    """终极拍板阶段节点"""
+    agent_state = state["agent_state"]
+    team_config = agent_state.team_config or {}
+    agent_id = team_config.get("finalizer_agent_id")
+
+    if not agent_id:
+        # 新系统要求：必须显式指定终极拍板人。旧 arbitrator_agent_id 字段已重命名。
+        print(f"[Graph] Finalizer stage skipped: no finalizer_agent_id configured for user.", flush=True)
+        return {"agent_state": state["agent_state"]}
+
+    agent = GenericArbitratorAgent(agent_id)
+    updates = await agent.run(agent_state)
+
     current_state = state["agent_state"]
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
-            
+    if updates and "strategy_proposal" in updates:
+        current_state.strategy_proposal = updates["strategy_proposal"]
+
+    await agent.close()
     return {"agent_state": current_state}
 
-async def cross_examiner_node(state: GraphState):
-    """交叉质询节点：对多空提案进行轻量互审，生成PM裁决补充上下文"""
+async def risk_stage_node(state: GraphState):
+    """风控阶段节点：多风控官共识"""
+    agent_state = state["agent_state"]
+    team_config = agent_state.team_config or {}
+    agent_ids = team_config.get("risk_agent_ids", [])
+
+    if not agent_ids:
+        # 新系统要求：必须显式配置至少 1 个风控官（推荐 ≥2 形成多签共识）。旧 risk_agent_id 字段已重命名。
+        print(f"[Graph] Risk stage skipped: no risk_agent_ids configured for user.", flush=True)
+        return {"agent_state": state["agent_state"]}
+
+    if len(agent_ids) < 2:
+        print(f"[Graph] Risk stage warning: only {len(agent_ids)} risk agent configured. Recommend ≥2 for multi-signature consensus.", flush=True)
+
+    # 多风控官独立判断，结果合并到 risk_verdict
     current_state = state["agent_state"]
-    bull = current_state.bull_proposal
-    bear = current_state.bear_proposal
-    if not bull or not bear:
-        return {"agent_state": current_state}
+    agents = [GenericRiskAgent(aid) for aid in agent_ids]
+    results = await asyncio.gather(*(agent.run(agent_state) for agent in agents), return_exceptions=True)
 
-    policy = (current_state.execution_constraints or {}).get("cross_examiner_policy", {}) or {}
-    cts_floor = float(policy.get("cts_floor", 0.35) or 0.35)
-    confidence_weight = float(policy.get("confidence_weight", 1.0) or 1.0)
-    weakness_penalty = float(policy.get("weakness_penalty", 0.12) or 0.12)
-    ruin_high_penalty = float(policy.get("ruin_high_penalty", 0.2) or 0.2)
-    score_gap_hold_threshold = float(policy.get("score_gap_hold_threshold", 0.1) or 0.1)
-    high_conflict_hold_bias = bool(policy.get("high_conflict_hold_bias", True))
+    for res in results:
+        if isinstance(res, dict) and "risk_verdict" in res:
+            current_state.risk_verdict = res["risk_verdict"]
+        elif isinstance(res, Exception):
+            print(f"Error in risk agent: {res}")
 
-    def _proposal_weakness(name: str, proposal) -> tuple[list[str], float]:
-        issues = []
-        penalty = 0.0
-        try:
-            cts = float(getattr(proposal, "counter_thesis_strength", 0.5) or 0.5)
-            if cts < cts_floor:
-                issues.append(f"{name}: counter_thesis_strength偏低({cts:.2f})")
-                penalty += weakness_penalty
-        except Exception:
-            issues.append(f"{name}: counter_thesis_strength缺失或不可解析")
-            penalty += weakness_penalty
-        fc = list(getattr(proposal, "failure_conditions", []) or [])
-        if len(fc) < 2:
-            issues.append(f"{name}: failure_conditions不足(<2)")
-            penalty += weakness_penalty
-        dr = list(getattr(proposal, "decision_rationale_compact", []) or [])
-        if len(dr) != 3:
-            issues.append(f"{name}: decision_rationale_compact应为3条")
-            penalty += weakness_penalty
-        roh = str(getattr(proposal, "risk_of_ruin_hint", "medium") or "medium").lower()
-        conf = float(getattr(proposal, "confidence", 0.0) or 0.0)
-        if roh == "high" and conf >= 0.75:
-            issues.append(f"{name}: 高置信但risk_of_ruin_hint=high")
-            penalty += ruin_high_penalty
-        return issues, penalty
-
-    bull_action = str(getattr(bull, "action", "HOLD") or "HOLD").upper()
-    bear_action = str(getattr(bear, "action", "HOLD") or "HOLD").upper()
-    directional_conflict = (
-        bull_action in {"LONG", "BUY"} and bear_action in {"SHORT"}
-    ) or (
-        bull_action in {"HOLD"} and bear_action in {"SHORT"}
-    ) or (
-        bull_action in {"LONG", "BUY"} and bear_action in {"HOLD"}
-    )
-    conflict_level = "high" if directional_conflict else "medium"
-    if bull_action == "HOLD" and bear_action == "HOLD":
-        conflict_level = "low"
-    bull_issues, bull_penalty = _proposal_weakness("bull", bull)
-    bear_issues, bear_penalty = _proposal_weakness("bear", bear)
-    bull_conf = float(getattr(bull, "confidence", 0.0) or 0.0)
-    bear_conf = float(getattr(bear, "confidence", 0.0) or 0.0)
-    bull_score = max(0.0, confidence_weight * bull_conf - bull_penalty)
-    bear_score = max(0.0, confidence_weight * bear_conf - bear_penalty)
-    score_gap = abs(bull_score - bear_score)
-    if bull_score > bear_score:
-        recommended_preference = "bull"
-    elif bear_score > bull_score:
-        recommended_preference = "bear"
-    else:
-        recommended_preference = "hold"
-    hold_bias = bool(
-        (conflict_level == "high" and high_conflict_hold_bias and score_gap <= score_gap_hold_threshold)
-        or (recommended_preference == "hold")
-    )
-    notes = {
-        "conflict_level": conflict_level,
-        "bull_action": bull_action,
-        "bear_action": bear_action,
-        "bull_weaknesses": bull_issues,
-        "bear_weaknesses": bear_issues,
-        "bull_score": round(bull_score, 4),
-        "bear_score": round(bear_score, 4),
-        "score_gap": round(score_gap, 4),
-        "recommended_preference": "hold" if hold_bias else recommended_preference,
-        "hold_bias": hold_bias,
-        "policy": {
-            "cts_floor": cts_floor,
-            "confidence_weight": confidence_weight,
-            "weakness_penalty": weakness_penalty,
-            "ruin_high_penalty": ruin_high_penalty,
-            "score_gap_hold_threshold": score_gap_hold_threshold,
-            "high_conflict_hold_bias": high_conflict_hold_bias,
-        },
-        "suggestion": "prefer_hold_on_high_conflict" if hold_bias else "normal_arbitration",
-    }
-    current_state.debate_notes = notes
-    return {"agent_state": current_state}
-
-async def portfolio_manager_node(state: GraphState):
-    """基金经理裁判节点"""
-    agent = PortfolioManager()
-    updates = await agent.run(state["agent_state"])
-    
-    current_state = state["agent_state"]
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
-            
-    return {"agent_state": current_state}
-
-async def reviewer_node(state: GraphState):
-    """风控节点：审查策略方案"""
-    agent = Reviewer()
-    updates = await agent.run(state["agent_state"])
-    
-    current_state = state["agent_state"]
-    if updates:
-        for k, v in updates.items():
-            setattr(current_state, k, v)
-            
+    for agent in agents:
+        await agent.close()
     return {"agent_state": current_state}
 
 from redis import Redis
@@ -298,20 +277,6 @@ async def reflector_node(state: GraphState):
     return {"agent_state": state["agent_state"]}
 
 # --- 条件边逻辑 ---
-
-def check_strategist_feedback(state: GraphState) -> Literal["analyst", "reviewer"]:
-    """
-    检查策略师是否请求更多信息
-    """
-    agent_state = state["agent_state"]
-    
-    # 策略师请求了反馈，且我们还没有收到反馈（或者这是一个新的请求）
-    # 但由于 Analyst 会在处理后清除 feedback (返回 None)，
-    # 所以如果这里 feedback 存在，说明是 Strategist 刚刚提出的。
-    if agent_state.analyst_feedback:
-        return "analyst"
-        
-    return "reviewer"
 
 def should_continue_negotiation(state: GraphState) -> Literal["revise", "reflect", "end"]:
     """判断是否需要继续策略修订循环"""
@@ -346,12 +311,6 @@ def should_continue_negotiation(state: GraphState) -> Literal["revise", "reflect
     # 4. 超过重试次数，直接反思结束
     return "reflect"
 
-def check_analysis_completion(state: GraphState) -> Literal["strategist", "wait"]:
-    """
-    检查并行分析是否全部完成。
-    """
-    return "strategist"
-
 # --- 图构建 ---
 
 def _normalize_orchestration_config(orchestration_config: Dict[str, Any] | None) -> OrchestrationConfig:
@@ -362,58 +321,37 @@ def _normalize_orchestration_config(orchestration_config: Dict[str, Any] | None)
 
 def create_trading_workflow(orchestration_config: Dict[str, Any] | None = None):
     cfg = _normalize_orchestration_config(orchestration_config)
-    enabled_analysis_nodes = [n for n in cfg.enabled_analysis_nodes if n in {"analyst", "sentiment", "macro", "onchain"}]
-    if not enabled_analysis_nodes:
-        enabled_analysis_nodes = ["analyst"]
+    
     # 初始化图
     workflow = StateGraph(GraphState)
 
     # 添加节点
-    workflow.add_node("analyst", analyst_node)
-    workflow.add_node("sentiment", sentiment_node)
-    workflow.add_node("macro", macro_node)
-    workflow.add_node("onchain", onchain_node)
-    
-    workflow.add_node("bull_strategist", bull_strategist_node)
-    workflow.add_node("bear_strategist", bear_strategist_node)
-    workflow.add_node("cross_examiner", cross_examiner_node)
-    workflow.add_node("portfolio_manager", portfolio_manager_node)
-    
-    workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("news_stage", news_stage_node)
+    workflow.add_node("market_stage", market_stage_node)
+    workflow.add_node("decision_stage", decision_stage_node)
+    workflow.add_node("arbitration_stage", arbitration_stage_node)
+    workflow.add_node("risk_stage", risk_stage_node)
     workflow.add_node("reflector", reflector_node)
 
-    # 构建结构
-    for node in enabled_analysis_nodes:
-        workflow.add_edge(START, node)
+    # 构建结构：先加载压缩新闻，再做行情/决策分析，使下游 Agent 拿到新闻上下文
+    workflow.add_edge(START, "news_stage")
+    workflow.add_edge("news_stage", "market_stage")
+    workflow.add_edge("market_stage", "decision_stage")
+    workflow.add_edge("decision_stage", "arbitration_stage")
+    workflow.add_edge("arbitration_stage", "risk_stage")
 
-    for node in enabled_analysis_nodes:
-        workflow.add_edge(node, "bull_strategist")
-        workflow.add_edge(node, "bear_strategist")
-
-    # 3. 策略辩论汇聚到基金经理
-    if cfg.enable_cross_examiner:
-        workflow.add_edge("bull_strategist", "cross_examiner")
-        workflow.add_edge("bear_strategist", "cross_examiner")
-        workflow.add_edge("cross_examiner", "portfolio_manager")
-    else:
-        workflow.add_edge("bull_strategist", "portfolio_manager")
-        workflow.add_edge("bear_strategist", "portfolio_manager")
-    
-    # 4. 基金经理裁决后交给风控
-    workflow.add_edge("portfolio_manager", "reviewer")
-
-    # 5. 风控条件分支（循环）
+    # 风控条件分支（循环）
     workflow.add_conditional_edges(
-        "reviewer",
+        "risk_stage",
         should_continue_negotiation,
         {
-            "revise": "portfolio_manager", # 如果只是简单参数问题，PM 直接修改，或者也可以退回给策略师
+            "revise": "arbitration_stage", # 退回重新拍板或重新决策？先退回拍板
             "reflect": "reflector", # 通过或最终拒绝，进入反思
             "end": "reflector"      # 异常情况
         }
     )
 
-    # 6. 反思后结束
+    # 反思后结束
     workflow.add_edge("reflector", END)
 
     return workflow.compile()

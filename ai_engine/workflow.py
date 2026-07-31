@@ -58,11 +58,11 @@ class WorkflowEngine:
         self.graph_app = create_trading_workflow(orchestration_config=orchestration_config)
         print("✅ Agents reloaded.")
 
-    async def start_loop(self, symbol: str, session_id: str):
+    async def start_loop(self, symbol: str, session_id: str, user_id: str = "default"):
         """
         Start continuous workflow loop. If already running, update config.
         """
-        self.latest_config = {"symbol": symbol, "session_id": session_id}
+        self.latest_config = {"symbol": symbol, "session_id": session_id, "user_id": user_id}
         
         # Persist desired state
         await self.redis_client.set("system_status:loop_active", "true")
@@ -106,9 +106,10 @@ class WorkflowEngine:
         while not self.stop_signal:
             try:
                 symbol = self.latest_config.get("symbol")
+                user_id = self.latest_config.get("user_id", "default")
                 current_session_id = workflow_loop_policy.build_cycle_session_id(symbol)
                 print(f"[Workflow] Starting Cycle for {symbol} (Session: {current_session_id})...")
-                await self.run_workflow(symbol, current_session_id)
+                await self.run_workflow(symbol, current_session_id, user_id=user_id)
                 sleep_duration = settings.WORKFLOW_LOOP_INTERVAL 
                 print(f"[Workflow] Cycle Complete. Sleeping for {sleep_duration}s...")
                 await workflow_loop_policy.sleep_interval(sleep_duration, lambda: self.stop_signal)
@@ -125,7 +126,7 @@ class WorkflowEngine:
         
         self.is_running = False
 
-    async def run_workflow(self, symbol: str, session_id: str = None):
+    async def run_workflow(self, symbol: str, session_id: str = None, user_id: str = "default", trigger_context: dict = None):
         """
         Execute one full cycle of the Agent Workflow.
         Thread-safe: Skips execution if already running.
@@ -139,7 +140,23 @@ class WorkflowEngine:
             if not session_id:
                 session_id = str(uuid.uuid4())
             
-            print(f"Starting Workflow Session: {session_id}", flush=True)
+            print(f"Starting Workflow Session: {session_id} for User: {user_id}", flush=True)
+
+            # Fetch Context from Session Manager API
+            custom_prompts = {}
+            team_config = {}
+            if user_id and user_id != "default":
+                try:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        headers = {"X-Internal-Service": "ai_engine", "X-User-Id": user_id}
+                        resp = await client.get(f"{settings.BACKEND_URL}/api/v1/session-mgr/context/{user_id}", headers=headers)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            custom_prompts = data.get("team_prompts", {}) # use team_prompts instead of legacy custom_prompts
+                            team_config = data.get("team_config", {})
+                except Exception as e:
+                    print(f"[Workflow] Warning: Failed to fetch user context for {user_id}: {e}", flush=True)
 
             await workflow_session_api.create_session_with_retry(
                 session_id=session_id,
@@ -152,7 +169,7 @@ class WorkflowEngine:
             try:
                 # 1. Initialize State
                 try:
-                    account_balance = await workflow_runtime_api.fetch_account_balance_with_retry(retries=3, retry_delay=1.0)
+                    account_balance = await workflow_runtime_api.fetch_account_balance_with_retry(user_id=user_id, retries=3, retry_delay=1.0)
                 except Exception as e:
                     error_msg = str(e)
                     print(f"[Workflow] 🚨 CRITICAL: Failed to fetch account balance: {error_msg}", flush=True)
@@ -180,13 +197,17 @@ class WorkflowEngine:
                 # -------------------------------
 
                 # Fetch Positions
-                positions = await workflow_runtime_api.fetch_positions()
+                positions = await workflow_runtime_api.fetch_positions(user_id=user_id)
 
                 state_build = await workflow_state_builder.build(
                     symbol=symbol,
                     session_id=session_id,
                     account_balance=account_balance,
                     positions=positions,
+                    user_id=user_id,
+                    custom_prompts=custom_prompts,
+                    team_config=team_config,
+                    trigger_context=trigger_context,
                 )
                 state = state_build.state
                 safety = state_build.safety

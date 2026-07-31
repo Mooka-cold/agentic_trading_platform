@@ -246,6 +246,7 @@ class BullStrategist(BaseAgent):
                     "portfolio_context": portfolio_context,
                     "execution_constraints": execution_constraints
                 },
+                state=state,
                 output_model=StrategyProposal
             )
             

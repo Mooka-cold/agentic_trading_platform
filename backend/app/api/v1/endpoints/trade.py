@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 import math
 import json
 import hashlib
+import uuid
 import redis.asyncio as redis
 from app.db.session import get_user_db
 from app.services.execution.service import ExecutionService
@@ -207,36 +208,58 @@ async def execute_trade(
 @router.get("/positions")
 async def get_positions(
     db: Session = Depends(get_user_db),
-    user_id: int = Depends(get_runtime_user_id),
+    user_id: uuid.UUID = Depends(get_runtime_user_id),
 ):
     """
-    Get all open positions.
+    Get current open positions for the user.
     """
     service = ExecutionService(db, user_id=user_id)
     try:
-        return service.get_all_positions()
+        if service.mode == "PAPER":
+            positions = service.paper_service.get_open_positions(user_id=user_id)
+            return [
+                {
+                    "symbol": p.symbol,
+                    "side": p.side,
+                    "size": float(p.size),
+                    "entry_price": float(p.entry_price),
+                    "opened_at": p.opened_at,
+                }
+                for p in positions
+            ]
+        else:
+            return [{"status": "real_trading_not_implemented_in_this_endpoint"}]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/orders")
-async def get_order_history(
-    limit: int = 20,
+async def get_orders(
     db: Session = Depends(get_user_db),
-    user_id: int = Depends(get_runtime_user_id),
+    user_id: uuid.UUID = Depends(get_runtime_user_id),
 ):
     """
-    Get recent order history.
+    Get order history for the user.
     """
     service = ExecutionService(db, user_id=user_id)
     try:
-        # ExecutionService uses PaperTradingService internally for PAPER mode
-        # We need to expose get_order_history in ExecutionService or access paper_service directly
         if service.mode == "PAPER":
-            # Use adapter method which returns dicts
-            return service.adapter.get_order_history(user_id=user_id, limit=limit)
+            orders = service.paper_service.get_order_history(user_id=user_id)
+            return [
+                {
+                    "symbol": o.symbol,
+                    "side": o.side,
+                    "quantity": float(o.quantity),
+                    "price": float(o.price) if o.price else None,
+                    "executed_price": float(o.executed_price) if o.executed_price else None,
+                    "status": o.status,
+                    "type": o.type,
+                    "created_at": o.created_at,
+                    "pnl": float(o.realized_pnl) if o.realized_pnl else None
+                }
+                for o in orders
+            ]
         else:
-            # LIVE mode not implemented for history yet
-            return []
+            return [{"status": "real_trading_not_implemented_in_this_endpoint"}]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -286,10 +309,11 @@ async def cancel_all_pending_orders(
 @router.get("/paper/account")
 async def get_paper_account(
     db: Session = Depends(get_user_db),
-    user_id: int = Depends(get_runtime_user_id),
+    user_id: uuid.UUID = Depends(get_runtime_user_id),
 ):
     """
     Get detailed paper account status (Balance, Equity, PnL).
+    Supports internal AI engine bypass via headers.
     """
     service = ExecutionService(db, user_id=user_id)
     if service.mode != "PAPER":

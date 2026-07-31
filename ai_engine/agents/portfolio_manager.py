@@ -140,6 +140,7 @@ class PortfolioManager(BaseAgent):
                     "review_feedback": review_feedback_str,
                     "cross_fire_context": cross_fire_context_str
                 },
+                state=state,
                 output_model=StrategyProposal
             )
 

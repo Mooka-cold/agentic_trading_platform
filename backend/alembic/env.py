@@ -13,7 +13,7 @@ from alembic import context
 # Import your models here
 from app.core.config import settings
 from app.db.base import Base
-from shared.models.user import User, Strategy, Order
+from shared.models.user import User, UserPrompt, UserAutomationRule
 from shared.models.news import News
 from shared.models.signal import Signal
 from shared.models.system import SystemConfig

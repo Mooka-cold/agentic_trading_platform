@@ -1,9 +1,6 @@
 // ─── Agent System Types ────────────────────────────────────
 
-export type AgentRole =
-  | 'market' | 'macro' | 'onchain' | 'sentiment'
-  | 'analyst' | 'bull_strategist' | 'bear_strategist'
-  | 'portfolio_manager' | 'reviewer' | 'executor' | 'reflector';
+export type AgentRole = string;
 
 export type AgentStatus = 'online' | 'offline' | 'degraded' | 'processing';
 
@@ -82,6 +79,29 @@ export interface DebateExchange {
   pmVerdict: AgentMessage;
 }
 
+// A single DebateTurn emitted by a Strategy Master in a given round.
+// Persisted in agent_logs.artifact (log_type='debate') and replayed
+// on the Swarm page so the full debate survives SSE misses.
+export interface DebateTurn {
+  round: number;
+  agent_id: string;
+  agent_name?: string | null;
+  action: string;
+  confidence: number;
+  thesis: string;
+  rebuttals: string[];
+  references: string[];
+  timestamp?: string | null;
+}
+
+// Audit trail of the finalizer's decision: which debate turns it relied on.
+export interface FinalizeLog {
+  final_action: string;
+  final_confidence: number;
+  reasoning: string;
+  debate_turn_ids: string[];
+}
+
 // ─── Trade & Execution ─────────────────────────────────────
 
 export interface TradeRecord {
@@ -125,6 +145,8 @@ export interface Session {
   revisionRounds: RevisionRound[];
   messages: AgentMessage[];
   debate: DebateExchange | null;
+  debateTurns?: DebateTurn[];      // full chronological debate thread (multi-round)
+  finalizeLog?: FinalizeLog | null; // finalizer audit trail
   riskGates: RiskGate[];
   trade: TradeRecord | null;
   reflection: ReflectionEntry | null;

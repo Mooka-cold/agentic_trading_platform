@@ -3,7 +3,7 @@ import { StatusBadge, Panel } from '@/components/shared/StatusBadge';
 import { cn } from '@/lib/utils';
 import { formatDateTimeCN, formatTimeCN } from '@/lib/time';
 import { useState, useEffect } from 'react';
-import { ChevronRight, Download, FileSearch, Loader2 } from 'lucide-react';
+import { ChevronRight, Download, FileSearch, Loader2, Copy, Check } from 'lucide-react';
 import type { Session, TradeAction, AgentRole, AgentMessage } from '@/types';
 import { fetchSessions, fetchSessionDetail } from '@/data/api';
 
@@ -41,87 +41,27 @@ function getSeat(role: AgentRole) {
 
 function DialogueRoundtable({ messages }: { messages: AgentMessage[] }) {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  
+  // Exclude system logs, focus only on real agent dialogue (messages that are NOT from data sources like market/macro/onchain/sentiment if they are just inputs, OR keep them all but correctly count edges)
+  // Let's ensure the displayed dialogue messages are exactly what is rendered in the list.
   const sortedMessages = [...(messages || [])].sort((a, b) => +new Date(a.timestamp) - +new Date(b.timestamp));
+  
   const roleCounts: Record<string, number> = {};
   sortedMessages.forEach((m) => {
     roleCounts[m.agentRole] = (roleCounts[m.agentRole] || 0) + 1;
   });
-  const upstreamByRole: Record<AgentRole, AgentRole[]> = {
-    market: [],
-    macro: [],
-    sentiment: [],
-    onchain: [],
-    analyst: [],
-    bull_strategist: [],
-    bear_strategist: [],
-    portfolio_manager: [],
-    reviewer: [],
-    executor: [],
-    reflector: [],
-  };
-  PIPELINE_EDGES.forEach(([from, to]) => {
-    upstreamByRole[to].push(from);
-  });
-
-  const pairTotals: Record<string, number> = {};
-  const baseEdges: Array<{ fromRole: AgentRole; toRole: AgentRole; msg: AgentMessage; idx: number; key: string }> = [];
-  sortedMessages.forEach((msg, idx) => {
-    const upstreamRoles = upstreamByRole[msg.agentRole] || [];
-    upstreamRoles.forEach((fromRole) => {
-      const latestUpstreamIdx = sortedMessages
-        .slice(0, idx)
-        .map((m, i) => ({ m, i }))
-        .reverse()
-        .find((x) => x.m.agentRole === fromRole)?.i;
-      if (latestUpstreamIdx === undefined) return;
-      const key = `${fromRole}->${msg.agentRole}`;
-      pairTotals[key] = (pairTotals[key] || 0) + 1;
-      baseEdges.push({ fromRole, toRole: msg.agentRole, msg, idx, key });
-    });
-  });
-  const pairSeen: Record<string, number> = {};
-  const edges = baseEdges.map((e) => {
-    pairSeen[e.key] = (pairSeen[e.key] || 0) + 1;
-    return { ...e, seen: pairSeen[e.key], total: pairTotals[e.key] };
-  });
-
+  
+  // In the current architecture, some agents are not in PIPELINE_EDGES (like system, human, etc.)
+  // Let's render ALL sortedMessages directly in the list, rather than filtering by baseEdges which hides many logs.
+  
   if (!sortedMessages.length) {
     return <p className="text-xs font-mono text-muted-foreground">No dialogue logs in this session.</p>;
   }
 
   return (
     <div className="space-y-3">
-      <div className="relative w-full rounded border border-border/60 bg-secondary/10" style={{ paddingBottom: '72%' }}>
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-          {edges.map((e) => {
-            const p1 = getSeat(e.fromRole);
-            const p2 = getSeat(e.toRole);
-            const dx = p2.x - p1.x;
-            const dy = p2.y - p1.y;
-            const horizontal = Math.abs(dx) >= Math.abs(dy);
-            const lane = e.seen - (e.total + 1) / 2;
-            const laneOffset = lane * 2.2;
-            const c1x = horizontal ? p1.x + dx * 0.35 : p1.x + laneOffset;
-            const c1y = horizontal ? p1.y + laneOffset : p1.y + dy * 0.35;
-            const c2x = horizontal ? p1.x + dx * 0.65 : p2.x + laneOffset;
-            const c2y = horizontal ? p2.y + laneOffset : p1.y + dy * 0.65;
-            const d = `M ${p1.x} ${p1.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
-            const isActive = activeIdx === e.idx;
-            return (
-              <g key={`${e.key}-${e.idx}`}>
-                <path
-                  d={d}
-                  fill="none"
-                  stroke={isActive ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))'}
-                  strokeWidth={isActive ? 0.7 : 0.35}
-                  strokeOpacity={isActive ? 0.95 : 0.3}
-                  className="cursor-pointer transition-all pointer-events-auto"
-                  onClick={() => setActiveIdx(e.idx)}
-                />
-              </g>
-            );
-          })}
-        </svg>
+      {/* Visual node representation */}
+      <div className="relative w-full rounded border border-border/60 bg-secondary/10" style={{ paddingBottom: '30%' }}>
         {AGENT_SEATS.map((seat) => (
           <div
             key={seat.role}
@@ -137,24 +77,25 @@ function DialogueRoundtable({ messages }: { messages: AgentMessage[] }) {
         ))}
       </div>
 
-      <div className="max-h-56 overflow-y-auto rounded border border-border/40 bg-background/30">
-        {edges.map((e) => (
+      <div className="max-h-96 overflow-y-auto rounded border border-border/40 bg-background/30 scrollbar-thin">
+        {sortedMessages.map((msg, idx) => (
           <button
-            key={`row-${e.idx}`}
-            onClick={() => setActiveIdx(e.idx)}
+            key={`row-${idx}`}
+            onClick={() => setActiveIdx(idx)}
             className={cn(
               'w-full text-left px-2.5 py-2 border-b border-border/30 last:border-0 text-[11px] font-mono',
-              activeIdx === e.idx ? 'bg-primary/10' : 'hover:bg-secondary/30'
+              activeIdx === idx ? 'bg-primary/10' : 'hover:bg-secondary/30'
             )}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="text-muted-foreground">#{e.idx + 1}</span>
-              <span className="text-muted-foreground">{formatTimeCN(e.msg.timestamp)}</span>
+              <span className="text-muted-foreground">#{idx + 1}</span>
+              <span className="text-muted-foreground">{formatTimeCN(msg.timestamp)}</span>
             </div>
-            <div className="text-foreground mt-0.5">
-              {e.fromRole} → {e.toRole} · {e.msg.messageType}
+            <div className="text-foreground mt-0.5 flex items-center gap-1.5">
+              <span className="font-semibold text-primary">{msg.agentName}</span>
+              <StatusBadge status={msg.messageType} className="scale-75 origin-left" />
             </div>
-            <p className="text-muted-foreground mt-1 line-clamp-2">{e.msg.content}</p>
+            <p className="text-muted-foreground mt-1 line-clamp-3 hover:line-clamp-none transition-all">{msg.content}</p>
           </button>
         ))}
       </div>
@@ -320,6 +261,26 @@ function SessionDetail({ session }: { session: Session }) {
         </Panel>
       )}
     </div>
+  );
+}
+
+function CopyButton({ text, className }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      className={cn("p-1 hover:bg-primary/20 rounded text-muted-foreground hover:text-primary transition-colors flex-shrink-0", className)}
+      title="Copy"
+    >
+      {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
+    </button>
   );
 }
 
@@ -524,18 +485,23 @@ export default function SessionPage() {
         <Panel title="Sessions" className="lg:col-span-1">
           <div className="space-y-1">
             {filtered.map(sess => (
-              <button
+              <div
                 key={sess.id}
                 onClick={() => handleSelectSession(sess)}
+                role="button"
+                tabIndex={0}
                 className={cn(
-                  'w-full text-left p-2.5 rounded border text-xs font-mono transition-colors',
+                  'w-full text-left p-2.5 rounded border text-xs font-mono transition-colors cursor-pointer',
                   selectedSession?.id === sess.id
                     ? 'border-primary bg-primary/10'
                     : 'border-border/50 bg-secondary/20 hover:bg-secondary/40',
                 )}
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-primary">{sess.id}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center min-w-0">
+                    <span className="text-primary truncate">{sess.id}</span>
+                    <CopyButton text={sess.id} className="ml-1" />
+                  </div>
                   <StatusBadge status={sess.status} />
                 </div>
                 <div className="flex items-center justify-between mt-1">
@@ -543,7 +509,7 @@ export default function SessionPage() {
                   <span className="text-muted-foreground">{sess.trade?.action || 'HOLD'}</span>
                 </div>
                 <span className="text-muted-foreground text-[10px]">{formatDateTimeCN(sess.startTime)}</span>
-              </button>
+              </div>
             ))}
           </div>
         </Panel>
@@ -556,7 +522,14 @@ export default function SessionPage() {
               <p className="text-sm font-mono">Loading session details...</p>
             </div>
           ) : selectedSession ? (
-            <SessionDetail session={selectedSession} />
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-sm font-mono text-muted-foreground">Session ID:</span>
+                <span className="text-sm font-mono text-primary font-medium">{selectedSession.id}</span>
+                <CopyButton text={selectedSession.id} />
+              </div>
+              <SessionDetail session={selectedSession} />
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
               <FileSearch className="h-8 w-8 mb-2 opacity-40" />

@@ -7,7 +7,7 @@ from decimal import Decimal
 from app.core.config import settings
 
 class PositionMonitorService:
-    def __init__(self, db: Session, user_id: int = 1):
+    def __init__(self, db: Session, user_id=None):
         self.db = db
         self.user_id = user_id
         self.paper_service = PaperTradingService(db)
@@ -19,7 +19,9 @@ class PositionMonitorService:
         """
         Scan all open positions and apply risk rules.
         """
-        positions = self.paper_service.get_open_positions(self.user_id)
+        # Monitor runs as a background job, use a default system user id or bypass auth internally
+        # We need to make sure the paper_service doesn't fail if user_id=1 doesn't exist
+        positions = self.paper_service.get_open_positions(None)
         if not positions:
             return
 

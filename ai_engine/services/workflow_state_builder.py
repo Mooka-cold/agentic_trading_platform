@@ -50,6 +50,10 @@ class WorkflowStateBuilder:
         session_id: str,
         account_balance: float,
         positions: list,
+        user_id: str = "default",
+        custom_prompts: Dict[str, str] = None,
+        team_config: Dict[str, Any] = None,
+        trigger_context: Dict[str, Any] = None,
     ) -> WorkflowStateBuildResult:
         market_snapshot = market_data_service.get_full_snapshot(symbol)
         desired_notional = max(100.0, account_balance * 0.01)
@@ -123,6 +127,10 @@ class WorkflowStateBuilder:
 
         state = AgentState(
             session_id=session_id,
+            user_id=user_id,
+            custom_prompts=custom_prompts or {},
+            team_config=team_config or {},
+            trigger_context=trigger_context or {},
             market_data=market_data,
             account_balance=account_balance,
             positions=positions,

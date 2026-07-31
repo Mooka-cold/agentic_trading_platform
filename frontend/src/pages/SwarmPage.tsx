@@ -3,23 +3,24 @@ import { StatusBadge, Panel, ConfidenceBar, agentColorMap } from '@/components/s
 import { cn } from '@/lib/utils';
 import { formatTimeCN } from '@/lib/time';
 import { useState, useMemo, useEffect } from 'react';
-import type { AgentMessage, Session, AgentRole } from '@/types';
+import { useQuery } from '@tanstack/react-query';
+import type { AgentMessage, Session, AgentRole, DebateTurn, FinalizeLog } from '@/types';
 import { Scale, Swords, ChevronDown, ChevronUp, MessageSquare, ArrowRight, CheckCircle2, XCircle, AlertTriangle, Loader2, Play, Square, RefreshCw } from 'lucide-react';
 import { fetchSessions, fetchSessionDetail, fetchWorkflowRunnerStatus, runWorkflow, stopWorkflow } from '@/data/api';
 
 // ─── Agent seat definitions ────────────────────────────────
 
-const AGENT_SEATS: { role: AgentRole; label: string; shortLabel: string; x: number; y: number; team: string }[] = [
-  { role: 'market', label: 'Market Scanner', shortLabel: 'MKT', x: 16, y: 16, team: 'Data Team' },
-  { role: 'macro', label: 'Macro Analyst', shortLabel: 'MAC', x: 34, y: 16, team: 'Data Team' },
-  { role: 'sentiment', label: 'Sentiment Gauge', shortLabel: 'SNT', x: 16, y: 34, team: 'Data Team' },
-  { role: 'onchain', label: 'Onchain Monitor', shortLabel: 'OCH', x: 34, y: 34, team: 'Data Team' },
-  { role: 'analyst', label: 'Chief Analyst', shortLabel: 'ANA', x: 66, y: 18, team: 'Strategy Team' },
-  { role: 'bull_strategist', label: 'Bull Strategist', shortLabel: 'BULL', x: 58, y: 34, team: 'Strategy Team' },
-  { role: 'bear_strategist', label: 'Bear Strategist', shortLabel: 'BEAR', x: 78, y: 34, team: 'Strategy Team' },
-  { role: 'portfolio_manager', label: 'Portfolio Manager', shortLabel: 'PM', x: 18, y: 66, team: 'Risk Team' },
-  { role: 'reviewer', label: 'Risk Reviewer', shortLabel: 'REV', x: 34, y: 82, team: 'Risk Team' },
-  { role: 'executor', label: 'Trade Executor', shortLabel: 'EXE', x: 66, y: 66, team: 'Execution Team' },
+const AGENT_SEATS: { role: AgentRole; label: string; shortLabel: string; x: number; y: number; team: string; isMarket?: boolean; isDecision?: boolean; isArbitrator?: boolean; isRisk?: boolean; isExecutor?: boolean }[] = [
+  { role: 'market', label: 'Market Scanner', shortLabel: 'MKT', x: 16, y: 16, team: 'Data Team', isMarket: true },
+  { role: 'macro', label: 'Macro Analyst', shortLabel: 'MAC', x: 34, y: 16, team: 'Data Team', isMarket: true },
+  { role: 'sentiment', label: 'Sentiment Gauge', shortLabel: 'SNT', x: 16, y: 34, team: 'Data Team', isMarket: true },
+  { role: 'onchain', label: 'Onchain Monitor', shortLabel: 'OCH', x: 34, y: 34, team: 'Data Team', isMarket: true },
+  { role: 'analyst', label: 'Chief Analyst', shortLabel: 'ANA', x: 66, y: 18, team: 'Strategy Team', isDecision: true },
+  { role: 'bull_strategist', label: 'Bull Strategist', shortLabel: 'BULL', x: 58, y: 34, team: 'Strategy Team', isDecision: true },
+  { role: 'bear_strategist', label: 'Bear Strategist', shortLabel: 'BEAR', x: 78, y: 34, team: 'Strategy Team', isDecision: true },
+  { role: 'portfolio_manager', label: 'Portfolio Manager', shortLabel: 'PM', x: 18, y: 66, team: 'Risk Team', isArbitrator: true },
+  { role: 'reviewer', label: 'Risk Reviewer', shortLabel: 'REV', x: 34, y: 82, team: 'Risk Team', isRisk: true },
+  { role: 'executor', label: 'Trade Executor', shortLabel: 'EXE', x: 66, y: 66, team: 'Execution Team', isExecutor: true },
   { role: 'reflector', label: 'Reflector', shortLabel: 'REF', x: 82, y: 82, team: 'Execution Team' },
 ];
 
@@ -53,11 +54,80 @@ const agentTextColor: Record<string, string> = {
   executor: 'text-agent-executor', reflector: 'text-agent-reflector',
 };
 
+// ─── Dynamic Agent Node Generation from Team Config ──────────
+
+function generateAgentSeats(teamConfig: any) {
+  if (!teamConfig) return AGENT_SEATS; // Fallback to default
+  
+  const dynamicSeats: any[] = [];
+  
+  // Market Analysts
+  const marketAgents = (teamConfig.market_agent_ids || []).filter(Boolean);
+  marketAgents.forEach((id: string, idx: number) => {
+    const xOffset = 15 + (idx % 2) * 20;
+    const yOffset = 15 + Math.floor(idx / 2) * 15;
+    dynamicSeats.push({ role: id, label: id, shortLabel: id.substring(0, 3).toUpperCase(), x: xOffset, y: yOffset, team: 'Data Team', isMarket: true });
+  });
+
+  // Strategy Masters
+  const strategyAgents = (teamConfig.strategy_agent_ids || []).filter(Boolean);
+  strategyAgents.forEach((id: string, idx: number) => {
+    const xOffset = 60 + (idx % 2) * 20;
+    const yOffset = 15 + Math.floor(idx / 2) * 15;
+    dynamicSeats.push({ role: id, label: id, shortLabel: id.substring(0, 3).toUpperCase(), x: xOffset, y: yOffset, team: 'Strategy Team', isStrategy: true });
+  });
+
+  // Finalizer
+  if (teamConfig.finalizer_agent_id) {
+    dynamicSeats.push({ role: teamConfig.finalizer_agent_id, label: teamConfig.finalizer_agent_id, shortLabel: 'FIN', x: 25, y: 66, team: 'Risk Team', isFinalizer: true });
+  }
+
+  // Risk (multi-sig)
+  const riskAgents = (teamConfig.risk_agent_ids || []).filter(Boolean);
+  riskAgents.forEach((id: string, idx: number) => {
+    dynamicSeats.push({ role: id, label: id, shortLabel: 'RSK', x: 25, y: 82 + idx * 9, team: 'Risk Team', isRisk: true });
+  });
+
+  return dynamicSeats.length > 0 ? dynamicSeats : AGENT_SEATS;
+}
+
+function generatePipelineEdges(seats: any[]): [string, string][] {
+  const edges: [string, string][] = [];
+
+  const marketAgents = seats.filter(s => s.isMarket).map(s => s.role);
+  const strategyAgents = seats.filter(s => s.isStrategy).map(s => s.role);
+  const finalizer = seats.find(s => s.isFinalizer)?.role;
+  const riskAgents = seats.filter(s => s.isRisk).map(s => s.role);
+
+  // Market -> Strategy
+  marketAgents.forEach(m => {
+    strategyAgents.forEach(d => {
+      edges.push([m, d]);
+    });
+  });
+
+  // Strategy -> Finalizer
+  if (finalizer) {
+    strategyAgents.forEach(d => {
+      edges.push([d, finalizer]);
+    });
+  }
+
+  // Finalizer -> Risk (multi-sig)
+  if (finalizer) {
+    riskAgents.forEach(r => {
+      edges.push([finalizer, r]);
+    });
+  }
+
+  return edges.length > 0 ? edges : PIPELINE_EDGES as any;
+}
+
 // ─── Helpers ───────────────────────────────────────────────
 
-function getAgentPos(role: AgentRole) {
-  const seat = AGENT_SEATS.find(s => s.role === role)!;
-  return { x: seat.x, y: seat.y };
+function getAgentPos(role: string, seats: any[]) {
+  const seat = seats.find(s => s.role === role);
+  return seat ? { x: seat.x, y: seat.y } : { x: 50, y: 50 };
 }
 
 function getLastMessage(session: Session, role: AgentRole): AgentMessage | undefined {
@@ -65,9 +135,9 @@ function getLastMessage(session: Session, role: AgentRole): AgentMessage | undef
   return msgs.length > 0 ? msgs[msgs.length - 1] : undefined;
 }
 
-function getActiveEdges(session: Session): [AgentRole, AgentRole][] {
+function getActiveEdges(session: Session, dynamicEdges: [string, string][]): [string, string][] {
   const activeRoles = new Set(session.messages.map(m => m.agentRole));
-  return PIPELINE_EDGES.filter(([from, to]) => activeRoles.has(from) && activeRoles.has(to));
+  return dynamicEdges.filter(([from, to]) => activeRoles.has(from) && activeRoles.has(to));
 }
 
 function getPhaseStyle(msg?: AgentMessage) {
@@ -296,11 +366,11 @@ function PixelSprite({ role, size = 40 }: { role: AgentRole; size?: number }) {
 
 // ─── Agent Node Component ──────────────────────────────────
 
-function AgentNode({ role, label, shortLabel, session, isSelected, onClick }: {
-  role: AgentRole; label: string; shortLabel: string;
-  session: Session; isSelected: boolean; onClick: () => void;
+function AgentNode({ role, label, shortLabel, session, isSelected, onClick, dynamicSeats }: {
+  role: string; label: string; shortLabel: string;
+  session: Session; isSelected: boolean; onClick: () => void; dynamicSeats: any[];
 }) {
-  const pos = getAgentPos(role);
+  const pos = getAgentPos(role, dynamicSeats);
   const lastMsg = getLastMessage(session, role);
   const { bg, pulse } = getPhaseStyle(lastMsg);
   const confidence = lastMsg?.confidence;
@@ -353,8 +423,8 @@ function getEdgeConfidence(session: Session, from: AgentRole): number {
   return msg?.confidence ?? 0.5;
 }
 
-function DialogueEdges({ session, selectedAgent }: { session: Session; selectedAgent: AgentRole | null }) {
-  const edges = getActiveEdges(session);
+function DialogueEdges({ session, selectedAgent, dynamicEdges, dynamicSeats }: { session: Session; selectedAgent: string | null; dynamicEdges: [string, string][]; dynamicSeats: any[] }) {
+  const edges = getActiveEdges(session, dynamicEdges);
 
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -380,8 +450,8 @@ function DialogueEdges({ session, selectedAgent }: { session: Session; selectedA
         </filter>
       </defs>
       {edges.map(([from, to], idx) => {
-        const p1 = getAgentPos(from);
-        const p2 = getAgentPos(to);
+        const p1 = getAgentPos(from, dynamicSeats);
+        const p2 = getAgentPos(to, dynamicSeats);
         const isHighlighted = selectedAgent === from || selectedAgent === to;
         const pathId = `edge-${from}-${to}`;
         const dx = p2.x - p1.x;
@@ -461,57 +531,81 @@ function DialogueEdges({ session, selectedAgent }: { session: Session; selectedA
 
 // ─── Agent Decision Card (right panel) ─────────────────────
 
-function AgentDecisionCard({ msg, isLatest }: { msg: AgentMessage; isLatest: boolean }) {
+function AgentDecisionCard({ msg, isLatest, alignRight, seatLabel }: { msg: AgentMessage; isLatest: boolean; alignRight: boolean; seatLabel?: string }) {
   const [expanded, setExpanded] = useState(false);
+  const bgColor = agentColorMap[msg.agentRole] || 'bg-card border-border';
+  const textColor = agentTextColor[msg.agentRole] || 'text-foreground';
+
   return (
-    <div
-      className={cn(
-        'rounded border p-2.5 text-xs font-mono cursor-pointer transition-all hover:brightness-110',
-        agentColorMap[msg.agentRole] || 'bg-card border-border',
-        isLatest && 'ring-1 ring-primary/30',
-      )}
-      onClick={() => setExpanded(!expanded)}
-    >
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1.5">
-          <span className={cn('font-semibold', agentTextColor[msg.agentRole])}>{msg.agentName}</span>
-          <StatusBadge status={msg.messageType} className="text-[8px] px-1 py-0" />
+    <div className={cn('flex w-full mb-3', alignRight ? 'justify-end' : 'justify-start')}>
+      <div
+        className={cn(
+          'relative max-w-[85%] rounded-lg border p-2.5 text-xs font-mono cursor-pointer transition-all hover:brightness-110 shadow-sm',
+          bgColor,
+          isLatest && 'ring-1 ring-primary/30',
+          alignRight ? 'rounded-tr-none' : 'rounded-tl-none'
+        )}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {/* Chat Bubble Tail */}
+        <div 
+          className={cn(
+            'absolute top-0 w-3 h-3 border-t border-border',
+            alignRight 
+              ? '-right-1.5 border-r bg-inherit rotate-45 translate-x-1/2 translate-y-1' 
+              : '-left-1.5 border-l bg-inherit -rotate-45 -translate-x-1/2 translate-y-1'
+          )}
+          style={{ backgroundColor: 'inherit', borderBottomColor: 'transparent', borderRightColor: alignRight ? 'inherit' : 'transparent', borderLeftColor: !alignRight ? 'inherit' : 'transparent' }}
+        />
+
+        <div className={cn('flex items-center gap-1.5 mb-1.5', alignRight ? 'flex-row-reverse' : '')}>
+          <div className="flex items-center gap-1">
+            <span className={cn('font-bold', textColor)}>{seatLabel || msg.agentName}</span>
+            <StatusBadge status={msg.messageType} className="text-[8px] px-1 py-0 scale-90 origin-left" />
+          </div>
+          <div className="flex items-center gap-1 opacity-70 ml-auto mr-auto">
+            {msg.confidence !== undefined && <ConfidenceBar value={msg.confidence} className="w-12" />}
+          </div>
+          <span className="text-muted-foreground text-[8px]">{formatTimeCN(msg.timestamp)}</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          {msg.confidence !== undefined && <ConfidenceBar value={msg.confidence} className="w-14" />}
-          <span className="text-muted-foreground text-[9px]">{formatTimeCN(msg.timestamp)}</span>
-        </div>
+        
+        <p className={cn('text-foreground leading-relaxed', !expanded && 'line-clamp-3')}>{msg.content}</p>
+        
+        {expanded && msg.reasoning && (
+          <div className="mt-2 p-2 rounded bg-background/50 border border-border/50">
+            <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-1">Reasoning</p>
+            <p className="text-muted-foreground">{msg.reasoning}</p>
+          </div>
+        )}
       </div>
-      <p className={cn('text-foreground leading-relaxed', !expanded && 'line-clamp-2')}>{msg.content}</p>
-      {expanded && msg.reasoning && (
-        <div className="mt-2 p-2 rounded bg-secondary/50 border border-border/50">
-          <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-1">Reasoning</p>
-          <p className="text-muted-foreground">{msg.reasoning}</p>
-        </div>
-      )}
     </div>
   );
 }
 
 // ─── Conclusion Panel ──────────────────────────────────────
 
-function ConclusionPanel({ session }: { session: Session }) {
-  const verdict = session.debate?.pmVerdict;
-  const reviewerMsg = getLastMessage(session, 'reviewer');
-  const executorMsg = getLastMessage(session, 'executor');
+function ConclusionPanel({ session, dynamicSeats }: { session: Session; dynamicSeats: any[] }) {
+  const arbitratorRole = dynamicSeats.find(s => s.isArbitrator)?.role;
+  const riskRole = dynamicSeats.find(s => s.isRisk)?.role;
+  
+  const verdictMsg = arbitratorRole ? getLastMessage(session, arbitratorRole) : undefined;
+  const reviewerMsg = riskRole ? getLastMessage(session, riskRole) : undefined;
+
+  const arbitratorSeat = dynamicSeats.find(s => s.role === arbitratorRole);
+  const riskSeat = dynamicSeats.find(s => s.role === riskRole);
 
   return (
     <Panel title="Final Decision" actions={<StatusBadge status={session.status} />}>
       <div className="space-y-3">
         {/* PM Verdict */}
-        {verdict && (
+        {verdictMsg && (
           <div className="rounded border border-agent-pm/30 bg-agent-pm/5 p-3 text-xs font-mono">
             <div className="flex items-center gap-1.5 mb-1.5">
               <Scale className="h-3.5 w-3.5 text-agent-pm" />
-              <span className="text-agent-pm font-semibold">PM Verdict</span>
-              {verdict.confidence && <ConfidenceBar value={verdict.confidence} className="w-20 ml-auto" />}
+              <span className="text-agent-pm font-semibold">{arbitratorSeat ? arbitratorSeat.label : 'Arbitrator'} Verdict</span>
+              {verdictMsg.confidence && <ConfidenceBar value={verdictMsg.confidence} className="w-20 ml-auto" />}
             </div>
-            <p className="text-foreground leading-relaxed">{verdict.content}</p>
+            <p className="text-foreground leading-relaxed">{verdictMsg.content}</p>
           </div>
         )}
 
@@ -529,7 +623,7 @@ function ConclusionPanel({ session }: { session: Session }) {
                 : <CheckCircle2 className="h-3.5 w-3.5 text-agent-reviewer" />
               }
               <span className={reviewerMsg.messageType === 'error' ? 'text-danger font-semibold' : 'text-agent-reviewer font-semibold'}>
-                Risk Review
+                {riskSeat ? riskSeat.label : 'Risk Review'}
               </span>
               <StatusBadge status={reviewerMsg.messageType} className="text-[8px] px-1 py-0 ml-auto" />
             </div>
@@ -560,7 +654,7 @@ function ConclusionPanel({ session }: { session: Session }) {
           </div>
         )}
 
-        {!verdict && !reviewerMsg && !session.trade && (
+        {!verdictMsg && !reviewerMsg && !session.trade && (
           <p className="text-xs font-mono text-muted-foreground text-center py-4">Awaiting decision...</p>
         )}
       </div>
@@ -570,29 +664,175 @@ function ConclusionPanel({ session }: { session: Session }) {
 
 // ─── Debate Panel ──────────────────────────────────────────
 
-function DebatePanel({ session }: { session: Session }) {
-  if (!session.debate) return null;
-  const { bullArgument, bearArgument } = session.debate;
+function DebatePanel({ session, dynamicSeats }: { session: Session; dynamicSeats: any[] }) {
+  // Prefer the structured multi-round debate thread (persisted via log_type='debate').
+  // Fall back to the legacy single-round proposal view if no structured turns exist.
+  const turns: DebateTurn[] = (session.debateTurns || []) as DebateTurn[];
+
+  if (turns.length > 0) {
+    return <MultiRoundDebateView turns={turns} finalizeLog={session.finalizeLog} dynamicSeats={dynamicSeats} />;
+  }
+
+  // Legacy single-round fallback
+  const decisionRoles = new Set(dynamicSeats.filter(s => s.isDecision).map(s => s.role));
+  const proposals = Array.from(decisionRoles).map(role => getLastMessage(session, role)).filter(Boolean) as AgentMessage[];
+
+  if (proposals.length === 0) return null;
 
   return (
-    <Panel title="Bull vs Bear Debate" actions={
+    <Panel title="Strategist Proposals" actions={
       <Swords className="h-3.5 w-3.5 text-muted-foreground" />
     }>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        <div className="rounded border border-agent-bull/30 bg-agent-bull/5 p-2.5 text-xs font-mono">
-          <div className="flex items-center gap-1 mb-1">
-            <span className="text-agent-bull font-semibold">🐂 Bull</span>
-            {bullArgument.confidence && <ConfidenceBar value={bullArgument.confidence} className="w-14 ml-auto" />}
-          </div>
-          <p className="text-foreground leading-relaxed text-[11px]">{bullArgument.content}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto scrollbar-thin pr-1">
+        {proposals.map((prop, idx) => {
+          const colorClass = agentColorMap[prop.agentRole] || (idx % 2 === 0 ? 'bg-agent-bull/5 border-agent-bull/30' : 'bg-agent-bear/5 border-agent-bear/30');
+          const textClass = agentTextColor[prop.agentRole] || (idx % 2 === 0 ? 'text-agent-bull' : 'text-agent-bear');
+          const seat = dynamicSeats.find(s => s.role === prop.agentRole);
+
+          return (
+            <div key={prop.id} className={cn("rounded border p-2.5 text-xs font-mono", colorClass)}>
+              <div className="flex items-center gap-1 mb-1">
+                <span className={cn("font-semibold", textClass)}>
+                  {seat ? seat.label : prop.agentName}
+                </span>
+                {prop.confidence !== undefined && <ConfidenceBar value={prop.confidence} className="w-14 ml-auto" />}
+              </div>
+              <p className="text-foreground leading-relaxed text-[11px] line-clamp-4 hover:line-clamp-none transition-all">{prop.content}</p>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+// ─── Multi-Round Debate View (chronological thread) ────────
+
+function MultiRoundDebateView({ turns, finalizeLog, dynamicSeats }: { turns: DebateTurn[]; finalizeLog?: FinalizeLog | null; dynamicSeats: any[] }) {
+  // Group turns by round so the user can read R1 (independent) → R2 (rebuttals) cleanly.
+  const rounds = useMemo(() => {
+    const m: Record<number, DebateTurn[]> = {};
+    for (const t of turns) {
+      const r = t.round || 1;
+      (m[r] ||= []).push(t);
+    }
+    return Object.keys(m).map(Number).sort((a, b) => a - b).map(r => ({ round: r, turns: m[r] }));
+  }, [turns]);
+
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({ 1: true, 2: true });
+
+  const seatLabel = (agentId: string) => {
+    const seat = dynamicSeats.find(s => s.role === agentId);
+    return seat ? seat.label : (agentId || '').toUpperCase();
+  };
+
+  return (
+    <Panel
+      title="Strategy Debate Thread"
+      actions={
+        <div className="flex items-center gap-2">
+          <Swords className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-[10px] font-mono text-muted-foreground">{turns.length} turns · {rounds.length} rounds</span>
         </div>
-        <div className="rounded border border-agent-bear/30 bg-agent-bear/5 p-2.5 text-xs font-mono">
-          <div className="flex items-center gap-1 mb-1">
-            <span className="text-agent-bear font-semibold">🐻 Bear</span>
-            {bearArgument.confidence && <ConfidenceBar value={bearArgument.confidence} className="w-14 ml-auto" />}
+      }
+    >
+      <div className="space-y-3 max-h-[420px] overflow-y-auto scrollbar-thin pr-1">
+        {rounds.map(({ round, turns: roundTurns }) => {
+          const isOpen = expanded[round] ?? true;
+          const isRebuttalRound = round > 1;
+          return (
+            <div key={round} className={cn(
+              "rounded border p-2.5",
+              isRebuttalRound ? "border-agent-bull/30 bg-agent-bull/5" : "border-border bg-card"
+            )}>
+              <button
+                onClick={() => setExpanded(prev => ({ ...prev, [round]: !(prev[round] ?? true) }))}
+                className="w-full flex items-center justify-between text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <span className={cn(
+                    "text-[10px] font-mono font-bold px-1.5 py-0.5 rounded",
+                    isRebuttalRound ? "bg-agent-bull/20 text-agent-bull" : "bg-primary/15 text-primary"
+                  )}>
+                    R{round}
+                  </span>
+                  <span className="text-xs font-semibold text-foreground">
+                    {isRebuttalRound ? "Rebuttal Round" : "Opening Round (Independent)"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-mono">{roundTurns.length} speakers</span>
+                </div>
+                {isOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+              </button>
+
+              {isOpen && (
+                <div className="mt-2 space-y-2">
+                  {roundTurns.map((turn, idx) => {
+                    const isFinalizerPick = finalizeLog?.debate_turn_ids?.includes(`R${turn.round}_${turn.agent_id}`);
+                    return (
+                      <div key={`${turn.round}-${turn.agent_id}-${idx}`} className={cn(
+                        "rounded border p-2 text-[11px] font-mono",
+                        isFinalizerPick ? "border-primary/50 bg-primary/5" : "border-border/50 bg-background/40"
+                      )}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="font-semibold text-foreground">{seatLabel(turn.agent_id)}</span>
+                          <span className={cn(
+                            "inline-flex items-center rounded text-[9px] font-bold px-1.5 py-0.5",
+                            turn.action === 'BUY' || turn.action === 'LONG' ? "bg-success/20 text-success" :
+                            turn.action === 'SELL' || turn.action === 'SHORT' || turn.action === 'COVER' ? "bg-danger/20 text-danger" :
+                            "bg-muted text-muted-foreground"
+                          )}>
+                            {turn.action}
+                          </span>
+                          {typeof turn.confidence === 'number' && <ConfidenceBar value={turn.confidence} className="w-14 ml-auto" />}
+                          {isFinalizerPick && <span className="text-[9px] text-primary font-bold">★ finalizer cited</span>}
+                        </div>
+
+                        <p className="text-foreground leading-relaxed mb-1">
+                          <span className="text-[9px] text-muted-foreground uppercase mr-1">thesis</span>
+                          {turn.thesis}
+                        </p>
+
+                        {turn.rebuttals && turn.rebuttals.length > 0 && (
+                          <div className="mt-1 pl-2 border-l-2 border-agent-bull/40">
+                            <span className="text-[9px] text-muted-foreground uppercase">rebuttals</span>
+                            <ul className="mt-0.5 space-y-0.5">
+                              {turn.rebuttals.map((r, i) => (
+                                <li key={i} className="text-foreground/90 text-[11px] leading-snug">
+                                  <span className="text-agent-bull">↳</span> {r}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {turn.references && turn.references.length > 0 && (
+                          <div className="mt-1 text-[9px] text-muted-foreground">
+                            → responded to: {turn.references.map(r => seatLabel(r)).join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Finalizer audit trail */}
+        {finalizeLog && (
+          <div className="rounded border border-primary/40 bg-primary/5 p-2.5">
+            <div className="flex items-center gap-2 mb-1">
+              <Scale className="h-3.5 w-3.5 text-primary" />
+              <span className="text-xs font-semibold text-primary">Finalizer Decision</span>
+              <span className="ml-auto text-[10px] font-mono text-primary">{finalizeLog.final_action} @ {(finalizeLog.final_confidence * 100).toFixed(0)}%</span>
+            </div>
+            <p className="text-[11px] text-foreground leading-relaxed line-clamp-3 hover:line-clamp-none transition-all">{finalizeLog.reasoning}</p>
+            <div className="mt-1 text-[9px] text-muted-foreground">
+              Cited {finalizeLog.debate_turn_ids?.length || 0} debate turns: {finalizeLog.debate_turn_ids?.join(' · ')}
+            </div>
           </div>
-          <p className="text-foreground leading-relaxed text-[11px]">{bearArgument.content}</p>
-        </div>
+        )}
       </div>
     </Panel>
   );
@@ -601,11 +841,16 @@ function DebatePanel({ session }: { session: Session }) {
 // ─── Main Page ─────────────────────────────────────────────
 
 export default function SwarmPage() {
-  const [selectedAgent, setSelectedAgent] = useState<AgentRole | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
+  const [teamConfig, setTeamConfig] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [runnerStatus, setRunnerStatus] = useState<{ is_running: boolean; symbol?: string; session_id?: string; error?: string }>({ is_running: false });
   const [runnerBusy, setRunnerBusy] = useState(false);
+
+  // Derive dynamic state
+  const dynamicSeats = useMemo(() => generateAgentSeats(teamConfig), [teamConfig]);
+  const dynamicEdges = useMemo(() => generatePipelineEdges(dynamicSeats), [dynamicSeats]);
 
   const refreshRunnerStatus = async () => {
     try {
@@ -620,10 +865,20 @@ export default function SwarmPage() {
     async function loadLatest() {
       try {
         const history = await fetchSessions();
+        try {
+          const configRes = await fetch('/api/v1/system/team-config', {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
+          });
+          if (configRes.ok) {
+            setTeamConfig(await configRes.json());
+          }
+        } catch (e) {
+          console.warn("Failed to load team config", e);
+        }
         if (history.length > 0) {
           const sess = history[0]; // get the latest
           const detail = await fetchSessionDetail(sess.id);
-          
+
           const messages = detail.logs.map((l: any) => ({
             id: l.id,
             sessionId: sess.id,
@@ -636,11 +891,25 @@ export default function SwarmPage() {
             reasoning: l.artifact?.reasoning || undefined,
           }));
 
+          // ── Reconstruct the structured debate thread from persisted log artifacts ──
+          // Each `debate`-type log emitted by GenericDecisionAgent.run_debate_round
+          // contains the full DebateTurn JSON (round, agent_id, thesis, rebuttals,
+          // references, confidence, action, timestamp). Sorting by round gives us
+          // a chronological debate timeline that survives SSE misses.
+          const debateTurns: any[] = detail.logs
+            .filter((l: any) => l.type === 'debate' && l.artifact)
+            .map((l: any) => l.artifact)
+            .sort((a: any, b: any) => (a.round || 0) - (b.round || 0) || String(a.agent_id).localeCompare(String(b.agent_id)));
+
+          // Finalizer's "FINALIZE_BY_*" log captures which debate turns the
+          // arbitrator actually relied on. We surface it for the conclusion panel.
+          const finalizeLog = detail.logs.find((l: any) => l.type === 'finalize');
+
           let debate = null;
           const bull = messages.find((m: any) => m.agentRole === 'bull_strategist');
           const bear = messages.find((m: any) => m.agentRole === 'bear_strategist');
           const pm = messages.find((m: any) => m.agentRole === 'portfolio_manager');
-          
+
           if (bull && bear && pm) {
             debate = { bullArgument: bull, bearArgument: bear, pmVerdict: pm };
           }
@@ -673,7 +942,9 @@ export default function SwarmPage() {
             revisionRounds: [],
             messages,
             debate,
-            riskGates: [], // TODO: extract from reviewer logs if possible
+            debateTurns,        // full chronological DebateTurn list
+            finalizeLog: finalizeLog?.artifact || null,  // finalizer audit trail
+            riskGates: [],
             reflection: null,
           });
         }
@@ -683,16 +954,17 @@ export default function SwarmPage() {
         setLoading(false);
       }
     }
-    loadLatest();
-  }, []);
 
-  useEffect(() => {
-    refreshRunnerStatus();
+    loadLatest();
+    // 轮询刷新当前 session 数据，以实现实时滚动
     const timer = window.setInterval(() => {
+      loadLatest();
       refreshRunnerStatus();
     }, 5000);
     return () => window.clearInterval(timer);
   }, []);
+
+
 
   const handleRun = async () => {
     const symbol = currentSession?.symbol || 'BTC/USDT';
@@ -723,13 +995,13 @@ export default function SwarmPage() {
     if (!currentSession) return [];
     if (!selectedAgent) return currentSession.messages;
     // Show messages involving selected agent + messages to/from it
-    const relatedRoles = new Set<AgentRole>([selectedAgent]);
-    PIPELINE_EDGES.forEach(([from, to]) => {
+    const relatedRoles = new Set<string>([selectedAgent]);
+    dynamicEdges.forEach(([from, to]) => {
       if (from === selectedAgent) relatedRoles.add(to);
       if (to === selectedAgent) relatedRoles.add(from);
     });
     return currentSession.messages.filter(m => relatedRoles.has(m.agentRole));
-  }, [currentSession, selectedAgent]);
+  }, [currentSession, selectedAgent, dynamicEdges]);
 
   if (loading) {
     return <div className="p-8 text-center text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin mx-auto mb-2"/> Loading swarm state...</div>;
@@ -827,15 +1099,16 @@ export default function SwarmPage() {
                 </div>
               ))}
 
-              <DialogueEdges session={currentSession} selectedAgent={selectedAgent} />
+              <DialogueEdges session={currentSession} selectedAgent={selectedAgent} dynamicEdges={dynamicEdges} dynamicSeats={dynamicSeats} />
 
-              {AGENT_SEATS.map((seat) => (
+              {dynamicSeats.map((seat) => (
                 <AgentNode
                   key={seat.role}
                   {...seat}
                   session={currentSession}
                   isSelected={selectedAgent === seat.role}
                   onClick={() => setSelectedAgent(selectedAgent === seat.role ? null : seat.role)}
+                  dynamicSeats={dynamicSeats}
                 />
               ))}
             </div>
@@ -843,8 +1116,8 @@ export default function SwarmPage() {
 
           {/* Debate + Conclusion side by side */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <DebatePanel session={currentSession} />
-            <ConclusionPanel session={currentSession} />
+            <DebatePanel session={currentSession} dynamicSeats={dynamicSeats} />
+            <ConclusionPanel session={currentSession} dynamicSeats={dynamicSeats} />
           </div>
         </div>
 
@@ -852,7 +1125,7 @@ export default function SwarmPage() {
         <div className="space-y-4">
           <Panel
             title={selectedAgent
-              ? `${AGENT_SEATS.find(s => s.role === selectedAgent)?.label} Dialogue`
+              ? `${dynamicSeats.find(s => s.role === selectedAgent)?.label || selectedAgent} Dialogue`
               : 'Agent Dialogue Feed'
             }
             actions={
@@ -862,14 +1135,22 @@ export default function SwarmPage() {
               </div>
             }
           >
-            <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-              {displayMessages.map((msg, i) => (
-                <AgentDecisionCard
-                  key={msg.id}
-                  msg={msg}
-                  isLatest={i === displayMessages.length - 1}
-                />
-              ))}
+            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-3 scrollbar-thin">
+              {displayMessages.map((msg, i) => {
+                const seat = dynamicSeats.find(s => s.role === msg.agentRole);
+                // Ensure alignRight is always a boolean, defaulting to false if undefined
+                const alignRight = seat ? !!(seat.isArbitrator || seat.isRisk || seat.isExecutor) : false;
+                
+                return (
+                  <AgentDecisionCard
+                    key={msg.id}
+                    msg={msg}
+                    isLatest={i === displayMessages.length - 1}
+                    alignRight={alignRight}
+                    seatLabel={seat ? seat.label : undefined}
+                  />
+                );
+              })}
               {displayMessages.length === 0 && (
                 <p className="text-xs font-mono text-muted-foreground text-center py-8">No messages</p>
               )}

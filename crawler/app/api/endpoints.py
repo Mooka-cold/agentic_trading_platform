@@ -130,3 +130,10 @@ async def backfill_market(req: MarketBackfillRequest):
     finally:
         await crawler.close()
     return {"status": "success", "symbol": req.symbol, "timeframe": req.timeframe, "hours": req.hours, "inserted": total}
+
+
+@router.get("/health/news-sources")
+async def news_source_health():
+    """Return reachability status for every configured RSS news source."""
+    crawler = NewsCrawler()
+    return await crawler.health_check_sources()

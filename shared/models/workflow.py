@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Integer, DateTime, JSON, ForeignKey, Enum, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from shared.db.base import Base
@@ -15,6 +16,7 @@ class WorkflowSession(Base):
     __tablename__ = "workflow_sessions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True) # Multitenant linkage
     symbol = Column(String, nullable=False)
     status = Column(Enum(WorkflowStatus), default=WorkflowStatus.PENDING)
     start_time = Column(DateTime, server_default=func.now())

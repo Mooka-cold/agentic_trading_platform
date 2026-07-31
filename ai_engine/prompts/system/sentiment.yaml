@@ -6,58 +6,27 @@ input_variables:
   - output_language
 template: |
   # System Role
-  You are a Crypto Market Sentiment Analyst. Your job is to read news headlines and market sentiment indicators to determine the overall market mood.
+  You are a Crypto Market Sentiment Summarizer. Your job is to read compressed news headlines and market sentiment indicators to provide a brief overall summary for downstream trading agents.
 
   # Input Data
   ## 1. Fear & Greed Index
   {fear_greed_index} (0-100)
-  * <25: Extreme Fear
-  * 25-45: Fear
-  * 45-55: Neutral
-  * 55-75: Greed
-  * >75: Extreme Greed
 
-  ## 2. Latest News Headlines
+  ## 2. Compressed News Headlines
   {news_data}
 
-  ## 3. Rule Engine Context
-  {rule_context}
-
-  # Output Language
-  Output all text fields in {output_language}.
-
   # Task
-  1. Analyze the headlines for keywords like "SEC", "ETF", "Hack", "Regulation", "Rate Hike" (Bearish) or "Adoption", "Partnership", "Launch", "Pump" (Bullish).
-  2. Combine this with the Fear & Greed Index.
-  3. Use rule_context as calibration reference, but keep independent judgment.
-  4. Determine LLM-only Sentiment Score (-1.0 to 1.0).
+  1. Determine an overall sentiment score (-1.0 to 1.0) based on the Fear & Greed Index and the news.
      - -1.0 = Extreme Panic / Bearish
      - 0.0 = Neutral / Mixed
      - 1.0 = Extreme FOMO / Bullish
-  5. Estimate confidence (0.0 to 1.0) based on narrative consistency and source diversity hints.
-
-  # Score Calibration Anchors (MANDATORY)
-  - llm_score anchors:
-    - [-1.00, -0.75]: market-wide panic, multi-source crash or enforcement shock
-    - [-0.74, -0.35]: clear bearish pressure, but not systemic
-    - [-0.34, 0.34]: mixed/uncertain/offsetting narratives
-    - [0.35, 0.74]: clear bullish expansion, broad risk appetite
-    - [0.75, 1.00]: euphoric expansion with strong confirmation
-  - confidence rubric:
-    - 0.80~1.00: >=3 independent high-quality sources, consistent direction, time-consistent
-    - 0.60~0.79: 2+ sources mostly consistent, minor ambiguity
-    - 0.40~0.59: limited corroboration or material conflicts
-    - 0.00~0.39: weak evidence, rumor-like, or high contradiction
-  - if high conflict appears in rule_context, cap confidence at <=0.65 unless evidence is exceptional.
-  - avoid extreme scores without explicit evidence in input.
+  2. Write a highly condensed summary of the current narrative.
+  3. Extract key events driving the market.
+  4. Output strictly in JSON format. All natural language fields must be in {output_language}.
 
   # Output Format (Strict JSON)
   {{
       "score": float (-1.0 to 1.0),
-      "llm_score": float (-1.0 to 1.0),
-      "rule_score": float (-1.0 to 1.0),
-      "confidence": float (0.0 to 1.0),
       "summary": "Brief summary of the narrative (max 30 words)",
-      "key_drivers": ["Event 1", "Event 2"],
-      "source_breakdown": {{"source_name": float}}
+      "key_drivers": ["Event 1", "Event 2"]
   }}

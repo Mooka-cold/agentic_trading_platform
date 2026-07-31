@@ -85,9 +85,8 @@ class Reflector(BaseAgent):
         Reflect on the immediate decision (Buy/Sell/Hold) and the reasoning path.
         """
         action = state.strategy_proposal.action
-        bias = state.analyst_report.trading_bias if state.analyst_report else "UNKNOWN"
         
-        reflection_msg = f"Reflecting on decision to {action} (Bias: {bias})..."
+        reflection_msg = f"Reflecting on decision to {action}..."
         await self.think(reflection_msg, session_id)
         
         # Construct a simple self-critique prompt
@@ -95,7 +94,6 @@ class Reflector(BaseAgent):
         
         summary = (
             f"Decision: {action}\n"
-            f"Analyst Bias: {bias}\n"
             f"Strategist Confidence: {state.strategy_proposal.confidence}\n"
             f"Risk Verdict: {'APPROVED' if state.risk_verdict and state.risk_verdict.approved else 'REJECTED'}"
         )
@@ -169,12 +167,12 @@ class Reflector(BaseAgent):
                     f"Session ID: {session_id}"
                 )
             
-            messages = [
-                SystemMessage(content=f"{system_msg}\nAll explanatory text must be in {self.output_language}. Keep JSON keys in English."),
-                HumanMessage(content=user_msg)
-            ]
-            
-            result = await self.llm.ainvoke(messages)
+            result = await self.call_llm(
+                prompt_vars,
+                state=None, # Immediate doesn't have full state
+                output_model=None,
+                prompt_name="reflector/immediate"
+            )
             content = result.content
             
             # 3. Parse JSON (Heuristic)
@@ -342,34 +340,13 @@ class Reflector(BaseAgent):
                         # 5. Call LLM
                         content = ""
                         try:
-                            # Use load_prompt and call_llm
-                            # We can reuse BaseAgent.call_llm but need to support custom prompt name
-                            # call_llm takes prompt_vars and output_model.
-                            # But T_PLUS_1H output is complex JSON.
-                            
-                            # Let's do a direct call similar to run_immediate_review
-                            prompt_def = self._load_prompt(prompt_name)
-                            if prompt_def:
-                                system_msg = prompt_def.get("system", "You are a crypto trading analyst.")
-                                user_msg = prompt_def.get("user", "").format(**prompt_vars) if prompt_vars else f"Review {stage} for {action}"
-                                
-                                from langchain_core.messages import SystemMessage, HumanMessage
-                                messages = [
-                                    SystemMessage(content=f"{system_msg}\nAll explanatory text must be in {self.output_language}. Keep JSON keys in English."),
-                                    HumanMessage(content=user_msg)
-                                ]
-                                
-                                # Use ainvoke with json binding
-                                # llm_json = self.llm.bind(response_format={"type": "json_object"})
-                                # response = await llm_json.ainvoke(messages)
-                                # content = response.content
-                                # FIX: bind() method might not be available on all LLM wrappers or versions.
-                                # Use standard invoke and parse.
-                                response = await self.llm.ainvoke(messages)
-                                content = response.content if isinstance(response.content, str) else json.dumps(response.content)
-                            else:
-                                content = json.dumps({"conclusion": f"Simulated {stage} review for {action}."})
-                                
+                            result = await self.call_llm(
+                                prompt_vars,
+                                state=None,
+                                output_model=None,
+                                prompt_name="reflector/session_review"
+                            )
+                            content = result.content
                         except Exception as llm_e:
                             print(f"[Reflector] LLM failed: {llm_e}", flush=True)
                             content = json.dumps({"error": str(llm_e), "stage": stage})

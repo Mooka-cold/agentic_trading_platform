@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 class PaperAccount(Base):
     __tablename__ = "paper_accounts"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(Integer, nullable=True) # Optional link to real user
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True) # Multitenant linkage
     balance = Column(Numeric(20, 8), nullable=False, default=200000.0) # Updated default to 200k
     currency = Column(String(10), nullable=False, default='USDT')
     created_at = Column(DateTime(timezone=True), server_default=text('now()'))
@@ -76,9 +76,13 @@ class PaperTradingService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_or_create_account(self, user_id: int = None) -> PaperAccount:
-        user_id = 1 if user_id is None else user_id
-        query = select(PaperAccount).where(PaperAccount.user_id == user_id) if user_id else select(PaperAccount).limit(1)
+    def get_or_create_account(self, user_id: uuid.UUID = None) -> PaperAccount:
+        if user_id:
+            # We can use the actual UUID type here since user_id is typed as uuid.UUID
+            query = select(PaperAccount).where(PaperAccount.user_id == user_id)
+        else:
+            query = select(PaperAccount).where(PaperAccount.user_id.is_(None)).limit(1)
+            
         account = self.db.execute(query).scalar_one_or_none()
         
         if not account:
@@ -88,7 +92,7 @@ class PaperTradingService:
             self.db.refresh(account)
         return account
 
-    def get_equity(self, user_id: int = None, current_prices: dict = None) -> float:
+    def get_equity(self, user_id: uuid.UUID = None, current_prices: dict = None) -> float:
         """
         Calculate total equity: Balance + Unrealized PnL
         """
@@ -240,7 +244,7 @@ class PaperTradingService:
             "max_drawdown_limit_pct": max_drawdown_limit
         }
 
-    def _compute_equity_snapshot(self, user_id: int = None, current_equity: float = None) -> dict:
+    def _compute_equity_snapshot(self, user_id: uuid.UUID = None, current_equity: float = None) -> dict:
         account = self.get_or_create_account(user_id)
         if current_equity is None:
             open_positions = self.get_open_positions(user_id)
@@ -260,7 +264,7 @@ class PaperTradingService:
             "max_dd": max_dd
         }
 
-    def check_portfolio_risk(self, user_id: int = None, current_equity: float = None) -> dict:
+    def check_portfolio_risk(self, user_id: uuid.UUID = None, current_equity: float = None) -> dict:
         """
         Check Portfolio-Level Risk Limits (Circuit Breakers)
         Returns: {"allowed": bool, "reason": str}
@@ -292,7 +296,7 @@ class PaperTradingService:
 
         return {"allowed": True, "reason": "OK"}
 
-    def reset_daily_metrics(self, user_id: int = None, current_equity: float = None):
+    def reset_daily_metrics(self, user_id: uuid.UUID = None, current_equity: float = None):
         """
         Reset Daily Start Balance at 00:00 UTC
         """
@@ -343,7 +347,7 @@ class PaperTradingService:
         self.db.commit()
         return {"status": "ok", "reset_count": reset_count}
 
-    def get_risk_state(self, user_id: int = None, current_equity: float = None) -> dict:
+    def get_risk_state(self, user_id: uuid.UUID = None, current_equity: float = None) -> dict:
         snapshot = self._compute_equity_snapshot(user_id, current_equity)
         account = snapshot["account"]
         limits = self._get_risk_thresholds()
@@ -361,7 +365,7 @@ class PaperTradingService:
         }
 
 
-    def get_pending_orders(self, user_id: int = None) -> list[PaperOrder]:
+    def get_pending_orders(self, user_id: uuid.UUID = None) -> list[PaperOrder]:
         """
         Get all pending (LIMIT/STOP_LIMIT) orders.
         """
@@ -374,7 +378,7 @@ class PaperTradingService:
         ).scalars().all()
         return orders
 
-    def place_order(self, symbol: str, side: str, order_type: str, quantity: float, current_price: float, trigger_price: float = None, sl: float = None, tp: float = None, session_id: str = None, order_book: dict = None, user_id: int = 1):
+    def place_order(self, symbol: str, side: str, order_type: str, quantity: float, current_price: float, trigger_price: float = None, sl: float = None, tp: float = None, session_id: str = None, order_book: dict = None, user_id: uuid.UUID = None):
         """
         Place an order. If MARKET, execute immediately. If LIMIT/STOP_LIMIT, create PENDING order.
         """
@@ -470,7 +474,7 @@ class PaperTradingService:
                     
         return triggered_count
 
-    def execute_market_order(self, symbol: str, side: str, quantity: float, current_price: float, sl: float = None, tp: float = None, session_id: str = None, order_book: dict = None, user_id: int = 1):
+    def execute_market_order(self, symbol: str, side: str, quantity: float, current_price: float, sl: float = None, tp: float = None, session_id: str = None, order_book: dict = None, user_id: uuid.UUID = None):
         """
         Execute a market order immediately with basic margin and PnL realization.
         Supports Slippage Simulation via order_book and Liquidity Constraint.
@@ -811,7 +815,7 @@ class PaperTradingService:
 
         return order, execution_info
 
-    def cancel_pending_orders(self, user_id: int = None, symbol: str = None) -> dict:
+    def cancel_pending_orders(self, user_id: uuid.UUID = None, symbol: str = None) -> dict:
         account = self.get_or_create_account(user_id)
         query = (
             select(PaperOrder)
@@ -830,7 +834,7 @@ class PaperTradingService:
         self.db.commit()
         return {"cancelled": len(orders), "symbol": symbol}
 
-    def get_open_positions(self, user_id: int = None) -> list[PaperPosition]:
+    def get_open_positions(self, user_id: uuid.UUID = None) -> list[PaperPosition]:
         """
         Get all open positions for an account.
         """
@@ -843,7 +847,7 @@ class PaperTradingService:
         ).scalars().all()
         return positions
 
-    def get_order_history(self, user_id: int = None, limit: int = 20) -> list[PaperOrder]:
+    def get_order_history(self, user_id: uuid.UUID = None, limit: int = 20) -> list[PaperOrder]:
         """
         Get recent order history.
         """

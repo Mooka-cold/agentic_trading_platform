@@ -17,35 +17,64 @@ class User(Base):
     is_superuser = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    strategies = relationship("Strategy", back_populates="owner")
+    prompts = relationship("UserPrompt", back_populates="owner")
+    automation_rules = relationship("UserAutomationRule", back_populates="owner")
 
-class Strategy(Base):
-    __tablename__ = "strategies"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    name = Column(String, nullable=False)
-    description = Column(String)
-    prompt_template = Column(String)
-    config = Column(JSON)
-    status = Column(String, default="active")
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    owner = relationship("User", back_populates="strategies")
-    orders = relationship("Order", back_populates="strategy")
-
-class Order(Base):
-    __tablename__ = "orders"
+class UserPrompt(Base):
+    __tablename__ = "user_prompts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"))
-    symbol = Column(String, nullable=False)
-    side = Column(String, nullable=False) # BUY, SELL
-    order_type = Column(String, default="MARKET") # LIMIT, MARKET
-    price = Column(String) # Decimal as string
-    amount = Column(String) # Decimal as string
-    status = Column(String, default="pending") # pending, filled, failed
-    exchange_order_id = Column(String)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    agent_role = Column(String, nullable=False, index=True) # e.g., 'bull_strategist', 'analyst'
+    system_prompt_override = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", back_populates="prompts")
+
+class SystemPersona(Base):
+    __tablename__ = "system_personas"
+
+    id = Column(String, primary_key=True) # e.g., 'warren_buffett', 'justin_sun'
+    name = Column(String, nullable=False) # e.g., '巴菲特 (Warren Buffett)'
+    role_type = Column(String, nullable=False, index=True) # 'MARKET', 'DECISION', 'ARBITRATOR', 'RISK', 'EXECUTION'
+    description = Column(String, nullable=True)
+    prompt_template = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    strategy = relationship("Strategy", back_populates="orders")
+class UserTeamConfig(Base):
+    __tablename__ = "user_team_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
+    
+    # Stores lists of persona IDs for each stage
+    market_agent_ids = Column(JSON, default=list) # e.g., ["ray_dalio", "cathie_wood"] 行情分析师
+    strategy_agent_ids = Column(JSON, default=list) # e.g., ["buffett", "justin_sun"] 策略大师（多种投资哲学）
+    risk_agent_ids = Column(JSON, default=list) # e.g., ["howard_marks", "charlie_munger"] 风控官（多签共识）
+
+    # Stores single persona ID for final decision
+    finalizer_agent_id = Column(String, nullable=True) # e.g., "charlie_munger" 终极拍板人
+
+    # Execution field is hidden from UI in v1; keep column for backward compatibility.
+    execution_agent_id = Column(String, nullable=True) # e.g., "algo_twap_bot"
+
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class UserAutomationRule(Base):
+    __tablename__ = "user_automation_rules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    symbol = Column(String, nullable=False, index=True)
+    rule_type = Column(String, nullable=False, index=True) # 'CRON', 'INDICATOR', 'NEWS'
+    condition_payload = Column(JSON, nullable=False) # e.g. {"indicator": "RSI", "operator": "<", "value": 30}
+    action_payload = Column(JSON, nullable=True) # Extra params for workflow
+    is_active = Column(Boolean, default=True)
+    last_triggered_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", back_populates="automation_rules")

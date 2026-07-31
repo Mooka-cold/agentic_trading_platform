@@ -94,6 +94,10 @@ async def task_run_llm_daily_calibration():
     window_days = settings.CALIBRATION_WINDOW_DAYS
     await trigger_task("Run LLM Daily Calibration", f"{BACKEND_URL}/api/v1/calibration/run?symbol={symbol}&window_days={window_days}")
 
+async def task_trigger_cron_rules():
+    # Call Backend Trigger Engine for CRON
+    await trigger_task("Trigger CRON Rules", f"{BACKEND_URL}/api/v1/trigger/cron", method="POST")
+
 # --- Main ---
 
 async def task_cleanup_zombies():
@@ -148,6 +152,9 @@ async def main():
 
     # 7. Zombie Cleanup (Every 10m)
     scheduler.add_job(task_cleanup_zombies, "interval", minutes=10, id="cleanup_zombies")
+
+    # 8. Multi-tenant CRON Trigger Evaluation (Every 1m)
+    scheduler.add_job(task_trigger_cron_rules, "interval", minutes=1, id="trigger_cron_rules")
     
     logger.info("🚀 Global Scheduler Started")
     scheduler.start()

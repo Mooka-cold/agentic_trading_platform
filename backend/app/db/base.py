@@ -1,6 +1,6 @@
 from shared.db.base import Base, BaseMarket
 # Import all models so Alembic can find them
-from shared.models.user import User, Strategy, Order
+from shared.models.user import User, UserPrompt, UserAutomationRule
 from shared.models.news import News
 from shared.models.signal import Signal
 from shared.models.system import SystemConfig

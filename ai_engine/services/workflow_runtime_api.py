@@ -8,13 +8,17 @@ from core.config import settings
 class WorkflowRuntimeAPI:
     def __init__(self, backend_url: str):
         self.backend_url = backend_url.rstrip("/")
+        # We need an internal service token or mechanism to bypass user auth
+        self.internal_headers = {"X-Internal-Service": "ai_engine"}
 
-    async def fetch_account_balance_with_retry(self, retries: int = 3, retry_delay: float = 1.0) -> float:
+    async def fetch_account_balance_with_retry(self, user_id: str, retries: int = 3, retry_delay: float = 1.0) -> float:
         last_error = None
         for attempt in range(retries):
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
-                    res = await client.get(f"{self.backend_url}/api/v1/trade/paper/account")
+                    # Pass user_id as query param for internal route, or add header
+                    headers = {**self.internal_headers, "X-User-Id": user_id}
+                    res = await client.get(f"{self.backend_url}/api/v1/trade/paper/account", headers=headers)
                 if res.status_code != 200:
                     raise RuntimeError(f"paper account api status={res.status_code}, body={res.text[:200]}")
                 payload = res.json() if isinstance(res.json(), dict) else {}
@@ -27,10 +31,11 @@ class WorkflowRuntimeAPI:
                     await asyncio.sleep(retry_delay * (attempt + 1))
         raise RuntimeError(f"failed to fetch account balance after {retries} attempts: {last_error}")
 
-    async def fetch_positions(self) -> List[Any]:
+    async def fetch_positions(self, user_id: str) -> List[Any]:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                res = await client.get(f"{self.backend_url}/api/v1/trade/positions")
+                headers = {**self.internal_headers, "X-User-Id": user_id}
+                res = await client.get(f"{self.backend_url}/api/v1/trade/positions", headers=headers)
                 if res.status_code == 200:
                     data = res.json()
                     if isinstance(data, list):
@@ -40,4 +45,4 @@ class WorkflowRuntimeAPI:
         return []
 
 
-workflow_runtime_api = WorkflowRuntimeAPI(settings.BACKEND_URL)
+workflow_runtime_api = WorkflowRuntimeAPI(backend_url=settings.BACKEND_URL)

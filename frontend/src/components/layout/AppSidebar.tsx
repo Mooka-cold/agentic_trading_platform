@@ -20,16 +20,21 @@ import {
   Activity,
   Settings,
   ChartCandlestick,
+  Users,
+  Workflow,
+  Database
 } from 'lucide-react';
 
 const navItems = [
   { title: 'Overview', url: '/', icon: LayoutDashboard },
   { title: 'Dashboard', url: '/dashboard', icon: ChartCandlestick },
+  { title: 'Agent Studio', url: '/studio', icon: Users },
+  { title: 'Automation Builder', url: '/automation', icon: Workflow },
+  { title: 'Data Sources', url: '/data-sources', icon: Database },
   { title: 'Swarm', url: '/swarm', icon: Orbit },
   { title: 'Portfolio', url: '/portfolio', icon: Activity },
   { title: 'Session', url: '/session', icon: FileSearch },
   { title: 'Reflection', url: '/reflection', icon: Brain },
-  { title: 'Orchestration', url: '/orchestration', icon: GitBranch },
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
 
@@ -47,7 +52,7 @@ export function AppSidebar() {
             {!collapsed && (
               <div>
                 <h1 className="text-sm font-mono font-bold text-primary text-glow">AGENT TRADE</h1>
-                <p className="text-[10px] font-mono text-muted-foreground">Multi-Agent Trading System</p>
+                <p className="text-[10px] font-mono text-muted-foreground">SaaS AI Trading Platform</p>
               </div>
             )}
           </div>

@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.db.session import get_user_db
+from app.api.v1.deps import get_runtime_user_id
 from shared.models.workflow import WorkflowSession, AgentLog, WorkflowStatus
+import uuid
 from pydantic import BaseModel
 from typing import Optional, Any, List
 from datetime import datetime
@@ -60,12 +62,14 @@ async def get_runner_status():
     return {"is_running": False}
 
 @router.post("/run")
-async def run_workflow(req: WorkflowRunRequest):
+async def run_workflow(req: WorkflowRunRequest, user_id: uuid.UUID = Depends(get_runtime_user_id)):
     import httpx
     from app.core.config import settings
     try:
+        payload = req.dict()
+        payload["user_id"] = str(user_id)
         async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{settings.AI_ENGINE_URL}/workflow/run", json=req.dict())
+            resp = await client.post(f"{settings.AI_ENGINE_URL}/workflow/run", json=payload)
             if resp.status_code == 200:
                 return resp.json()
             raise HTTPException(status_code=resp.status_code, detail=resp.text)
@@ -93,7 +97,12 @@ class WorkflowUpdate(BaseModel):
     periodic_review_status: Optional[str] = None # Added missing field
 
 @router.patch("/session/{session_id:path}")
-def update_session(session_id: str, update: WorkflowUpdate, db: Session = Depends(get_user_db)):
+async def update_session(session_id: str, update: WorkflowUpdate, request: Request, db: Session = Depends(get_user_db), user_id: uuid.UUID = Depends(get_runtime_user_id)):
+    if request.headers.get("X-Internal-Service") == "ai_engine":
+        pass # internal system call
+    else:
+        pass # Dependency handles auth
+        
     # print(f"DEBUG: Updating session {session_id} with {update.dict(exclude_unset=True)}", flush=True)
     session = db.query(WorkflowSession).filter(WorkflowSession.id == session_id).first()
     if not session:
@@ -129,7 +138,12 @@ def update_session(session_id: str, update: WorkflowUpdate, db: Session = Depend
     return {"status": "updated"}
 
 @router.post("/session")
-def create_session(wf: WorkflowCreate, db: Session = Depends(get_user_db)):
+async def create_session(wf: WorkflowCreate, request: Request, db: Session = Depends(get_user_db), user_id: uuid.UUID = Depends(get_runtime_user_id)):
+    if request.headers.get("X-Internal-Service") == "ai_engine":
+        pass # internal system call
+    else:
+        pass # Dependency handles auth
+        
     # Check if exists
     existing = db.query(WorkflowSession).filter(WorkflowSession.id == wf.session_id).first()
     if existing:
@@ -400,8 +414,10 @@ def cleanup_failed_sessions(db: Session = Depends(get_user_db)):
     """
     Delete all sessions with status FAILED.
     Also mark STALE RUNNING sessions (>10 mins) as FAILED.
+    Also delete old sessions beyond retention period.
     """
     from datetime import datetime, timedelta
+    from app.core.config import settings
     
     # 1. Mark Stale Sessions as FAILED
     stale_threshold = datetime.utcnow() - timedelta(minutes=10)
@@ -441,9 +457,32 @@ def cleanup_failed_sessions(db: Session = Depends(get_user_db)):
         
         db.delete(s)
         count += 1
+
+    # 3. Delete Old Sessions (Retention Policy)
+    retention_threshold = datetime.utcnow() - timedelta(days=settings.SESSION_RETENTION_DAYS)
+    old_sessions = db.query(WorkflowSession).filter(
+        WorkflowSession.start_time < retention_threshold
+    ).all()
+    
+    old_count = 0
+    for s in old_sessions:
+        db.query(AgentLog).filter(AgentLog.session_id == s.id).delete()
+        
+        from app.services.paper_trading import SessionReflection, PaperOrder, PaperPosition
+        db.query(SessionReflection).filter(SessionReflection.session_id == s.id).delete()
+        db.query(PaperOrder).filter(PaperOrder.session_id == s.id).delete()
+        db.query(PaperPosition).filter(PaperPosition.session_id == s.id).delete()
+        
+        db.delete(s)
+        old_count += 1
     
     db.commit()
-    return {"status": "cleaned", "deleted_count": count, "marked_failed_count": marked_count}
+    return {
+        "status": "cleaned", 
+        "deleted_failed_count": count, 
+        "marked_failed_count": marked_count,
+        "deleted_old_count": old_count
+    }
 
 @router.get("/list")
 def list_workflow_sessions(limit: int = 20, db: Session = Depends(get_user_db)):

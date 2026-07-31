@@ -18,15 +18,34 @@ export default function ReflectionPage() {
         const refs = [];
         for (const sess of top10) {
           const detail = await fetchSessionDetail(sess.id);
-          const reflectionLog = detail.logs.find((l: any) => l.agent_id === 'reflector' && l.artifact?.type === 'REFLECTION');
-          if (reflectionLog) {
+          const reflectionLogs = (detail.logs || []).filter(
+            (l: any) =>
+              l.agent_id === 'reflector' &&
+              (l.artifact?.type === 'REFLECTION' || l.artifact?.type === 'DECISION_REFLECTION')
+          );
+
+          for (const reflectionLog of reflectionLogs) {
             try {
-              const content = JSON.parse(reflectionLog.artifact.content);
+              const kind = reflectionLog.artifact?.type || 'REFLECTION';
+              let content: any = {};
+
+              if (kind === 'REFLECTION' && reflectionLog.artifact?.content) {
+                content = JSON.parse(reflectionLog.artifact.content);
+              } else if (kind === 'DECISION_REFLECTION') {
+                content = {
+                  what_went_right: [reflectionLog.artifact?.summary || 'Decision reflection archived.'],
+                  what_went_wrong: [],
+                  improvements: [],
+                  failure_mode: null,
+                };
+              }
+
               refs.push({
                 id: reflectionLog.id,
                 sessionId: sess.id,
                 symbol: sess.symbol,
                 sessionStatus: sess.status,
+                kind,
                 whatWentRight: content.what_went_right || [],
                 whatWentWrong: content.what_went_wrong || [],
                 improvements: content.improvements || [],
@@ -148,6 +167,9 @@ export default function ReflectionPage() {
                 <span className="text-sm font-mono text-primary font-semibold">{ref.sessionId}</span>
                 <span className="text-xs font-mono text-foreground font-semibold">{ref.symbol}</span>
                 <StatusBadge status={ref.sessionStatus as any} />
+                <span className="text-xs font-mono px-2 py-0.5 rounded border border-border/60 text-muted-foreground">
+                  {ref.kind}
+                </span>
                 {ref.failureMode && (
                   <span className="text-xs font-mono px-2 py-0.5 rounded bg-danger/10 text-danger border border-danger/20">
                     {ref.failureMode}
@@ -158,27 +180,39 @@ export default function ReflectionPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
                 <div>
                   <p className="text-success font-medium mb-2 uppercase tracking-wider text-[10px]">What Went Right</p>
-                  <ul className="space-y-1.5">
-                    {ref.whatWentRight.map((item, i) => (
-                      <li key={i} className="text-muted-foreground pl-3 border-l-2 border-success/30 leading-relaxed">{item}</li>
-                    ))}
-                  </ul>
+                  {ref.whatWentRight.length === 0 ? (
+                    <p className="text-muted-foreground text-[11px]">No items</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {ref.whatWentRight.map((item, i) => (
+                        <li key={i} className="text-muted-foreground pl-3 border-l-2 border-success/30 leading-relaxed">{item}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 <div>
                   <p className="text-danger font-medium mb-2 uppercase tracking-wider text-[10px]">What Went Wrong</p>
-                  <ul className="space-y-1.5">
-                    {ref.whatWentWrong.map((item, i) => (
-                      <li key={i} className="text-muted-foreground pl-3 border-l-2 border-danger/30 leading-relaxed">{item}</li>
-                    ))}
-                  </ul>
+                  {ref.whatWentWrong.length === 0 ? (
+                    <p className="text-muted-foreground text-[11px]">No items</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {ref.whatWentWrong.map((item, i) => (
+                        <li key={i} className="text-muted-foreground pl-3 border-l-2 border-danger/30 leading-relaxed">{item}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 <div>
                   <p className="text-primary font-medium mb-2 uppercase tracking-wider text-[10px]">Improvements</p>
-                  <ul className="space-y-1.5">
-                    {ref.improvements.map((item, i) => (
-                      <li key={i} className="text-muted-foreground pl-3 border-l-2 border-primary/30 leading-relaxed">{item}</li>
-                    ))}
-                  </ul>
+                  {ref.improvements.length === 0 ? (
+                    <p className="text-muted-foreground text-[11px]">No items</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {ref.improvements.map((item, i) => (
+                        <li key={i} className="text-muted-foreground pl-3 border-l-2 border-primary/30 leading-relaxed">{item}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             </div>

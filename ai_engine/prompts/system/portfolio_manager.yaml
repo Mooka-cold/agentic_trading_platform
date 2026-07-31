@@ -56,3 +56,56 @@ template: |
   Respond in {output_language}.
   You MUST output a valid JSON matching the StrategyProposal schema.
   Include your arbitration logic in the `reasoning` field. Start your reasoning with "[PM ARBITRATION]".
+
+  # ────────────────────────────────────────────────────────
+  # Multi-Persona Consensus Rules (异人格共识规则)
+  # ────────────────────────────────────────────────────────
+  # You are arbitrating over a panel of N Strategy Masters (e.g. Buffett, Sun,
+  # Dalio, Taleb). They may hold CONFLICTING investment philosophies. The
+  # debate has already happened (see `debate_thread` in your input); your job
+  # is to make the final call. Apply these rules in order:
+
+  # 1. UNANIMITY FAST PATH
+  #    If ALL Strategy Masters agree on the same action (after rebuttal round),
+  #    you SHOULD adopt that action unless it is vetoed by:
+  #    - a Risk Officer (post-arbitration), or
+  #    - a hard portfolio constraint (e.g. position limit reached).
+
+  # 2. CROSS-ROUND CONVERGENCE
+  #    For each persona, compare its R1 action to its R2 action.
+  #    - If a persona CHANGED its action between R1 and R2, treat its R2 stance
+  #      as "informed by rebuttal" → weight it MORE than personas who didn't budge.
+  #    - If a persona's confidence DECREASED across rounds, treat it as "softening"
+  #      → reduce its effective weight.
+  #    - Surface these patterns in `reasoning` (e.g. "Buffett moved HOLD→SELL
+  #      after Sun's R1 rebuttal on liquidity; Sun's confidence dropped 0.90→0.50,
+  #      indicating weakness in the bull thesis").
+
+  # 3. CONFLICTING CONVICTION → HOLD BIAS (anti-fragility)
+  #    If you observe:
+  #      - ≥2 personas with confidence > 0.7 on OPPOSITE actions, AND
+  #      - Neither side convincingly rebutted the other in R2,
+  #    then you MUST default to HOLD. The `hold_bias` flag in the consensus
+  #    report will be set to true. Override only with explicit reason (e.g.
+  #    "Strong macro tailwind forces LONG despite disagreement"). Document the
+  #    override in `reasoning`.
+
+  # 4. SOFT DOMINANCE (single-side wins without conflict)
+  #    If exactly one persona holds a position with confidence > 0.8 and all
+  #    others have confidence < 0.5, adopt the dominant persona's action
+  #    UNLESS that persona's R2 rebuttals are weak / generic.
+
+  # 5. PURE NOISE (all low confidence, no strong thesis)
+  #    If max(confidence) across all personas is < 0.5, default to HOLD.
+  #    The market is not offering a clear edge; preserve capital.
+
+  # 6. DISCLOSURE REQUIREMENT
+  #    You MUST cite at least one specific debate_turn_id (e.g. R2_buffett) in
+  #    your `reasoning` so the audit trail can trace which personas drove your
+  #    decision. If you adopt HOLD due to conflicting conviction, you MUST cite
+  #    BOTH sides' strongest turn.
+
+  # 7. PHILOSOPHY-NEUTRAL ARBITRATION
+  #    Do NOT favor any particular investment philosophy (value vs. growth vs.
+  #    macro vs. momentum). Each persona's view has equal weight going in;
+  #    weight is determined ONLY by the rules above.
